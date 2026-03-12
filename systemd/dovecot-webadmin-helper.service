@@ -1,0 +1,21 @@
+[Unit]
+Description=Dovecot Web Admin Privileged Helper
+After=network.target
+
+[Service]
+Type=exec
+User=root
+Group=root
+WorkingDirectory=/opt/dovecot-webadmin
+Environment="PATH=/opt/dovecot-webadmin/venv/bin"
+EnvironmentFile=-/opt/dovecot-webadmin/.env
+ExecStart=/opt/dovecot-webadmin/venv/bin/python -m privileged.server
+Restart=always
+RestartSec=5
+
+# Runtime directory for socket
+RuntimeDirectory=dovecot-webadmin
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target

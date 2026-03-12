@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page header -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <span class="text-sm text-gray-500">Last updated: <span id="last-update">just now</span></span>
+    </div>
+
+    <!-- Stats cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+         hx-get="/partials/dashboard/stats"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+        <!-- Placeholder cards while loading -->
+        <div class="bg-white rounded-lg shadow p-6 animate-pulse">
+            <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+            <div class="h-8 bg-gray-200 rounded w-1/2"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6 animate-pulse">
+            <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+            <div class="h-8 bg-gray-200 rounded w-1/2"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6 animate-pulse">
+            <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+            <div class="h-8 bg-gray-200 rounded w-1/2"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6 animate-pulse">
+            <div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+            <div class="h-8 bg-gray-200 rounded w-1/2"></div>
+        </div>
+    </div>
+
+    <!-- Main content grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Mail Queue Summary -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-gray-900">Mail Queue</h2>
+                <a href="/queue" class="text-blue-600 hover:text-blue-800 text-sm">View All</a>
+            </div>
+            <div class="p-6"
+                 hx-get="/partials/dashboard/queue-summary"
+                 hx-trigger="load, every 10s"
+                 hx-swap="innerHTML">
+                <div class="animate-pulse space-y-4">
+                    <div class="h-4 bg-gray-200 rounded w-full"></div>
+                    <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                    <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Overview -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-gray-900">Storage</h2>
+                <a href="/storage" class="text-blue-600 hover:text-blue-800 text-sm">Details</a>
+            </div>
+            <div class="p-6"
+                 hx-get="/partials/dashboard/storage-summary"
+                 hx-trigger="load, every 60s"
+                 hx-swap="innerHTML">
+                <div class="animate-pulse space-y-4">
+                    <div class="h-4 bg-gray-200 rounded w-full"></div>
+                    <div class="h-2 bg-gray-200 rounded w-full"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-900">Recent Mail Activity</h2>
+            <a href="/logs" class="text-blue-600 hover:text-blue-800 text-sm">View Logs</a>
+        </div>
+        <div class="divide-y divide-gray-200"
+             hx-get="/partials/dashboard/recent-activity"
+             hx-trigger="load, every 15s"
+             hx-swap="innerHTML">
+            <div class="p-6 animate-pulse space-y-4">
+                <div class="h-4 bg-gray-200 rounded w-full"></div>
+                <div class="h-4 bg-gray-200 rounded w-5/6"></div>
+                <div class="h-4 bg-gray-200 rounded w-4/6"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Alerts -->
+    <div class="bg-white rounded-lg shadow"
+         id="alerts-panel"
+         hx-get="/partials/dashboard/alerts"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+        <!-- Alerts will be loaded here -->
+    </div>
+</div>
+
+<script>
+    // Update "last updated" timestamp
+    function updateTimestamp() {
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+        updateTimestamp();
+    });
+</script>
+{% endblock %}

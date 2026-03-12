@@ -1,0 +1,50 @@
+<!-- Queue summary for dashboard -->
+<div class="space-y-4">
+    <!-- Queue stats row -->
+    <div class="grid grid-cols-4 gap-4 text-center">
+        <div>
+            <p class="text-2xl font-bold text-green-600">{{ stats.active }}</p>
+            <p class="text-xs text-gray-500 uppercase">Active</p>
+        </div>
+        <div>
+            <p class="text-2xl font-bold text-yellow-600">{{ stats.deferred }}</p>
+            <p class="text-xs text-gray-500 uppercase">Deferred</p>
+        </div>
+        <div>
+            <p class="text-2xl font-bold text-red-600">{{ stats.hold }}</p>
+            <p class="text-xs text-gray-500 uppercase">Hold</p>
+        </div>
+        <div>
+            <p class="text-2xl font-bold text-blue-600">{{ stats.incoming }}</p>
+            <p class="text-xs text-gray-500 uppercase">Incoming</p>
+        </div>
+    </div>
+
+    {% if recent_messages %}
+    <div class="border-t pt-4">
+        <p class="text-sm font-medium text-gray-700 mb-2">Recent Queue Items</p>
+        <div class="space-y-2">
+            {% for msg in recent_messages %}
+            <div class="flex justify-between items-center text-sm">
+                <span class="text-gray-600 truncate max-w-[60%]">{{ msg.sender }}</span>
+                <span class="px-2 py-0.5 rounded text-xs
+                    {% if msg.queue_name == 'active' %}bg-green-100 text-green-700
+                    {% elif msg.queue_name == 'deferred' %}bg-yellow-100 text-yellow-700
+                    {% elif msg.queue_name == 'hold' %}bg-red-100 text-red-700
+                    {% else %}bg-gray-100 text-gray-700{% endif %}">
+                    {{ msg.queue_name }}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center text-gray-500 py-4">
+        <svg class="w-8 h-8 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p>Queue is empty</p>
+    </div>
+    {% endif %}
+</div>

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page header -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h1 class="text-2xl font-bold text-gray-900">Mail Queue</h1>
+        <div class="flex gap-2">
+            <button hx-post="/api/queue/flush"
+                    hx-confirm="Attempt delivery of all queued messages?"
+                    hx-target="#queue-table"
+                    class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors">
+                Flush All
+            </button>
+            <button hx-get="/partials/queue/table"
+                    hx-target="#queue-table"
+                    class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Queue stats -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4"
+         hx-get="/partials/queue/stats"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
+        <div class="bg-white rounded-lg shadow p-4 text-center animate-pulse">
+            <div class="h-8 bg-gray-200 rounded w-12 mx-auto mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-16 mx-auto"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center animate-pulse">
+            <div class="h-8 bg-gray-200 rounded w-12 mx-auto mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-16 mx-auto"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center animate-pulse">
+            <div class="h-8 bg-gray-200 rounded w-12 mx-auto mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-16 mx-auto"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center animate-pulse">
+            <div class="h-8 bg-gray-200 rounded w-12 mx-auto mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-16 mx-auto"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4 text-center animate-pulse">
+            <div class="h-8 bg-gray-200 rounded w-12 mx-auto mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-16 mx-auto"></div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="flex flex-col sm:flex-row gap-4">
+            <select name="queue_name"
+                    hx-get="/partials/queue/table"
+                    hx-trigger="change"
+                    hx-target="#queue-table"
+                    hx-include="[name='search']"
+                    class="px-4 py-2 border border-gray-300 rounded-lg
+                           focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="">All Queues</option>
+                <option value="active">Active</option>
+                <option value="deferred">Deferred</option>
+                <option value="hold">Hold</option>
+                <option value="incoming">Incoming</option>
+            </select>
+            <input type="text"
+                   name="search"
+                   placeholder="Search by sender or recipient..."
+                   hx-get="/partials/queue/table"
+                   hx-trigger="keyup changed delay:300ms"
+                   hx-target="#queue-table"
+                   hx-include="[name='queue_name']"
+                   class="flex-1 px-4 py-2 border border-gray-300 rounded-lg
+                          focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        </div>
+    </div>
+
+    <!-- Queue table -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div id="queue-table"
+             hx-get="/partials/queue/table"
+             hx-trigger="load, every 5s"
+             hx-swap="innerHTML">
+            <div class="p-6 text-center text-gray-500">
+                <div class="animate-spin inline-block w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                <p class="mt-2">Loading queue...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Message Details Modal -->
+<div id="message-modal"
+     class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+     @keydown.escape.window="document.getElementById('message-modal').classList.add('hidden')">
+    <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+         @click.stop>
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white">
+            <h3 class="text-lg font-semibold text-gray-900">Message Details</h3>
+            <button onclick="document.getElementById('message-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-gray-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div id="message-details" class="p-6">
+            <!-- Content loaded via HTMX -->
+        </div>
+    </div>
+</div>
+{% endblock %}

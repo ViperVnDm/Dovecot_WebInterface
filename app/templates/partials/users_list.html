@@ -1,0 +1,71 @@
+<!-- User list table -->
+{% if users %}
+<table class="min-w-full divide-y divide-gray-200">
+    <thead class="bg-gray-50">
+        <tr>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Username
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                UID/GID
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Home Directory
+            </th>
+            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+            </th>
+        </tr>
+    </thead>
+    <tbody class="bg-white divide-y divide-gray-200">
+        {% for user in users %}
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 whitespace-nowrap">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0 h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span class="text-blue-600 font-medium text-sm">{{ user.username[0]|upper }}</span>
+                    </div>
+                    <div class="ml-3">
+                        <p class="font-medium text-gray-900">{{ user.username }}</p>
+                    </div>
+                </div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {{ user.uid }} / {{ user.gid }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {{ user.home }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                <button onclick="editUser('{{ user.username }}')"
+                        class="text-blue-600 hover:text-blue-900">
+                    Edit
+                </button>
+                <button hx-delete="/api/users/{{ user.username }}"
+                        hx-confirm="Delete user '{{ user.username }}'? This cannot be undone."
+                        hx-target="#users-table"
+                        class="text-red-600 hover:text-red-900">
+                    Delete
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="p-12 text-center">
+    <svg class="w-12 h-12 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+    </svg>
+    <h3 class="text-lg font-medium text-gray-900 mb-1">No users found</h3>
+    <p class="text-gray-500">Get started by creating your first mail user.</p>
+</div>
+{% endif %}
+
+<script>
+function editUser(username) {
+    // TODO: Open edit modal
+    alert('Edit user: ' + username);
+}
+</script>

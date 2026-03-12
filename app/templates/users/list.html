@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page header -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h1 class="text-2xl font-bold text-gray-900">User Management</h1>
+        <button onclick="document.getElementById('create-user-modal').classList.remove('hidden')"
+                class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors
+                       flex items-center">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+            </svg>
+            Add User
+        </button>
+    </div>
+
+    <!-- Search and filters -->
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="flex flex-col sm:flex-row gap-4">
+            <div class="flex-1">
+                <input type="text"
+                       name="search"
+                       placeholder="Search users..."
+                       hx-get="/partials/users/list"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-target="#users-table"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg
+                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <button hx-get="/partials/users/list"
+                    hx-target="#users-table"
+                    class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Users table -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div id="users-table"
+             hx-get="/partials/users/list"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <!-- Loading placeholder -->
+            <div class="p-6 text-center text-gray-500">
+                <div class="animate-spin inline-block w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                <p class="mt-2">Loading users...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create User Modal -->
+<div id="create-user-modal"
+     class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+     x-data
+     @keydown.escape.window="document.getElementById('create-user-modal').classList.add('hidden')">
+    <div class="bg-white rounded-lg shadow-xl max-w-md w-full"
+         @click.stop>
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h3 class="text-lg font-semibold text-gray-900">Create New User</h3>
+            <button onclick="document.getElementById('create-user-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-gray-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <form hx-post="/api/users"
+              hx-target="#users-table"
+              hx-on::after-request="if(event.detail.successful) { document.getElementById('create-user-modal').classList.add('hidden'); this.reset(); }"
+              class="p-6 space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                <input type="text"
+                       name="username"
+                       required
+                       pattern="[a-z][a-z0-9_-]{2,31}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg
+                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       placeholder="username">
+                <p class="text-sm text-gray-500 mt-1">Lowercase letters, numbers, underscores, hyphens. 3-32 chars.</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input type="password"
+                       name="password"
+                       required
+                       minlength="8"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg
+                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       placeholder="Minimum 8 characters">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Quota (MB)</label>
+                <input type="number"
+                       name="quota_mb"
+                       value="0"
+                       min="0"
+                       max="102400"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg
+                              focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <p class="text-sm text-gray-500 mt-1">0 = unlimited</p>
+            </div>
+            <div class="flex justify-end gap-3 pt-4">
+                <button type="button"
+                        onclick="document.getElementById('create-user-modal').classList.add('hidden')"
+                        class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                    Create User
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

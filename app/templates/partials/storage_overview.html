@@ -1,0 +1,70 @@
+<!-- Storage overview -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Main disk usage -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Mail Storage</h3>
+        {% if disk %}
+        <div class="space-y-4">
+            <div class="flex justify-between items-center">
+                <span class="text-gray-600">{{ disk.path }}</span>
+                <span class="text-xl font-bold {% if disk.percent > 90 %}text-red-600{% elif disk.percent > 75 %}text-yellow-600{% else %}text-green-600{% endif %}">
+                    {{ disk.percent }}%
+                </span>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="h-4 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500
+                    {% if disk.percent > 90 %}bg-red-500{% elif disk.percent > 75 %}bg-yellow-500{% else %}bg-green-500{% endif %}"
+                     style="width: {{ disk.percent }}%">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4 text-center text-sm">
+                <div>
+                    <p class="text-gray-500">Used</p>
+                    <p class="font-semibold">{{ disk.used_human }}</p>
+                </div>
+                <div>
+                    <p class="text-gray-500">Free</p>
+                    <p class="font-semibold">{{ disk.free_human }}</p>
+                </div>
+                <div>
+                    <p class="text-gray-500">Total</p>
+                    <p class="font-semibold">{{ disk.total_human }}</p>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="text-center text-gray-500 py-8">
+            Unable to read storage info
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Alert status -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Alert Status</h3>
+        {% if alerts %}
+        <div class="space-y-3">
+            {% for alert in alerts %}
+            <div class="flex items-center p-3 bg-red-50 rounded-lg">
+                <span class="w-2 h-2 bg-red-500 rounded-full mr-3 animate-pulse"></span>
+                <div>
+                    <p class="font-medium text-red-700">{{ alert.rule_name }}</p>
+                    <p class="text-sm text-red-600">{{ alert.message }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="flex items-center justify-center py-8 text-green-600">
+            <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span class="font-medium">All systems normal</span>
+        </div>
+        {% endif %}
+    </div>
+</div>

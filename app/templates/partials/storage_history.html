@@ -1,0 +1,34 @@
+<!-- Storage usage history chart -->
+{% if history %}
+<div class="relative">
+    <!-- Simple bar chart using CSS -->
+    <div class="flex items-end space-x-1 h-48">
+        {% for point in history %}
+        {% set percent = (point.used_bytes / point.total_bytes * 100) if point.total_bytes > 0 else 0 %}
+        <div class="flex-1 bg-blue-200 rounded-t hover:bg-blue-300 transition-colors relative group"
+             style="height: {{ percent }}%">
+            <div class="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2
+                        bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0
+                        group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                {{ percent|round(1) }}%
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="flex justify-between text-xs text-gray-500 mt-2">
+        <span>30 days ago</span>
+        <span>Today</span>
+    </div>
+</div>
+{% else %}
+<div class="h-64 flex items-center justify-center text-gray-400">
+    <div class="text-center">
+        <svg class="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        <p>No historical data yet</p>
+        <p class="text-sm">Data collection starts automatically</p>
+    </div>
+</div>
+{% endif %}

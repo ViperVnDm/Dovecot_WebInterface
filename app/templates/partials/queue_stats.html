@@ -1,0 +1,21 @@
+<!-- Queue statistics cards -->
+<div class="bg-white rounded-lg shadow p-4 text-center">
+    <p class="text-3xl font-bold text-green-600">{{ stats.active }}</p>
+    <p class="text-sm text-gray-500">Active</p>
+</div>
+<div class="bg-white rounded-lg shadow p-4 text-center">
+    <p class="text-3xl font-bold text-yellow-600">{{ stats.deferred }}</p>
+    <p class="text-sm text-gray-500">Deferred</p>
+</div>
+<div class="bg-white rounded-lg shadow p-4 text-center">
+    <p class="text-3xl font-bold text-red-600">{{ stats.hold }}</p>
+    <p class="text-sm text-gray-500">Hold</p>
+</div>
+<div class="bg-white rounded-lg shadow p-4 text-center">
+    <p class="text-3xl font-bold text-blue-600">{{ stats.incoming }}</p>
+    <p class="text-sm text-gray-500">Incoming</p>
+</div>
+<div class="bg-white rounded-lg shadow p-4 text-center col-span-2 md:col-span-1">
+    <p class="text-3xl font-bold text-gray-800">{{ stats.total }}</p>
+    <p class="text-sm text-gray-500">Total</p>
+</div>

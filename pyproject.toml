@@ -1,0 +1,18 @@
+[project]
+name = "dovecot-webinterface"
+version = "0.1.0"
+description = "Web-based admin console for Dovecot/Postfix mail servers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

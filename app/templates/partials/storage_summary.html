@@ -1,0 +1,33 @@
+<!-- Storage summary for dashboard -->
+{% if disk %}
+<div class="space-y-4">
+    <div class="flex justify-between items-center">
+        <span class="text-gray-600">{{ disk.path }}</span>
+        <span class="text-lg font-semibold {% if disk.percent > 90 %}text-red-600{% elif disk.percent > 75 %}text-yellow-600{% else %}text-green-600{% endif %}">
+            {{ disk.percent }}%
+        </span>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="h-3 bg-gray-200 rounded-full overflow-hidden">
+        <div class="h-full rounded-full transition-all duration-500
+            {% if disk.percent > 90 %}bg-red-500{% elif disk.percent > 75 %}bg-yellow-500{% else %}bg-green-500{% endif %}"
+             style="width: {{ disk.percent }}%">
+        </div>
+    </div>
+
+    <div class="flex justify-between text-sm text-gray-500">
+        <span>Used: {{ disk.used_human }}</span>
+        <span>Free: {{ disk.free_human }}</span>
+        <span>Total: {{ disk.total_human }}</span>
+    </div>
+</div>
+{% else %}
+<div class="text-center text-gray-500 py-4">
+    <svg class="w-8 h-8 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+    </svg>
+    <p>Unable to read storage info</p>
+</div>
+{% endif %}
