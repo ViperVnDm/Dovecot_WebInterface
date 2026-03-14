@@ -286,21 +286,23 @@ def cmd_list_users(params: dict[str, Any]) -> dict[str, Any]:
     users = []
 
     try:
-        mail_gid = grp.getgrnam(MAIL_GROUP).gr_gid
+        mail_group = grp.getgrnam(MAIL_GROUP)
+        mail_gid = mail_group.gr_gid
+        mail_members = set(mail_group.gr_mem)
     except KeyError:
         mail_gid = None
+        mail_members = set()
 
-    # List users in mail group
+    # List users in mail group (primary or supplementary)
     for user in pwd.getpwall():
-        # Filter to mail users (in mail group, home in mail spool)
-        if mail_gid and user.pw_gid == mail_gid:
-            if user.pw_name not in RESERVED_USERNAMES:
-                users.append({
-                    "username": user.pw_name,
-                    "uid": user.pw_uid,
-                    "gid": user.pw_gid,
-                    "home": user.pw_dir,
-                })
+        in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
+        if in_mail_group and user.pw_name not in RESERVED_USERNAMES:
+            users.append({
+                "username": user.pw_name,
+                "uid": user.pw_uid,
+                "gid": user.pw_gid,
+                "home": user.pw_dir,
+            })
 
     return {"users": users}
 
@@ -460,7 +462,7 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
 
     entries = []
     log_pattern = re.compile(
-        r"(\w{3}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s+(.*)"
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\w.+:-]*|\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s+(.*)"
     )
 
     for line in stdout.strip().split("\n"):
