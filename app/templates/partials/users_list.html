@@ -37,7 +37,7 @@
                 {{ user.home }}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                <button onclick="editUser('{{ user.username }}')"
+                <button onclick="openEditUser('{{ user.username }}')"
                         class="text-blue-600 hover:text-blue-900">
                     Edit
                 </button>
@@ -63,9 +63,3 @@
 </div>
 {% endif %}
 
-<script>
-function editUser(username) {
-    // TODO: Open edit modal
-    alert('Edit user: ' + username);
-}
-</script>

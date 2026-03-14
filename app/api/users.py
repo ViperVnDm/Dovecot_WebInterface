@@ -1,108 +1,92 @@
 """User management API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
-import re
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.templating import Jinja2Templates
+from pathlib import Path
 
 from app.core.security import get_current_user
+from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import AdminUser
 
 router = APIRouter()
+templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
-class CreateUserRequest(BaseModel):
-    """Request model for creating a mail user."""
-
-    username: str = Field(..., min_length=3, max_length=32)
-    password: str = Field(..., min_length=8, max_length=128)
-    quota_mb: int = Field(default=0, ge=0, le=102400)
-
-    @field_validator("username")
-    @classmethod
-    def validate_username(cls, v: str) -> str:
-        if not re.match(r"^[a-z][a-z0-9_-]*$", v):
-            raise ValueError(
-                "Username must start with letter, contain only lowercase, numbers, underscores, hyphens"
-            )
-        if v in ["root", "admin", "postfix", "dovecot", "mail", "nobody", "daemon"]:
-            raise ValueError("Reserved username")
-        return v
+def _format_bytes(size: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
 
 
-class UpdateUserRequest(BaseModel):
-    """Request model for updating a mail user."""
-
-    password: str | None = Field(default=None, min_length=8, max_length=128)
-    quota_mb: int | None = Field(default=None, ge=0, le=102400)
-
-
-class MailUser(BaseModel):
-    """Response model for a mail user."""
-
-    username: str
-    uid: int
-    gid: int
-    home: str
-    quota_mb: int | None = None
-    quota_used_mb: float | None = None
+async def _render_users_list(request: Request):
+    helper = get_helper_client()
+    try:
+        users = await helper.list_users()
+    except PrivilegedHelperError:
+        users = []
+    return templates.TemplateResponse(
+        "partials/users_list.html",
+        {"request": request, "users": users, "format_bytes": _format_bytes},
+    )
 
 
-@router.get("")
-async def list_users(
-    current_user: AdminUser = Depends(get_current_user),
-) -> list[MailUser]:
-    """List all mail users."""
-    # TODO: Implement via privileged helper
-    return []
-
-
-@router.post("", status_code=201)
+@router.post("")
 async def create_user(
-    request: CreateUserRequest,
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    quota_mb: int = Form(default=0),
     current_user: AdminUser = Depends(get_current_user),
-) -> MailUser:
+):
     """Create a new mail user."""
-    # TODO: Implement via privileged helper
-    raise HTTPException(status_code=501, detail="Not implemented")
+    helper = get_helper_client()
+    try:
+        await helper.create_user(username, password, quota_mb)
+    except PrivilegedHelperError as e:
+        return templates.TemplateResponse(
+            "partials/error.html",
+            {"request": request, "error": e.message},
+            status_code=400,
+        )
+    return await _render_users_list(request)
 
 
-@router.get("/{username}")
-async def get_user(
+@router.post("/{username}/password")
+async def set_password(
+    request: Request,
     username: str,
+    password: str = Form(...),
     current_user: AdminUser = Depends(get_current_user),
-) -> MailUser:
-    """Get a specific mail user."""
-    # TODO: Implement via privileged helper
-    raise HTTPException(status_code=501, detail="Not implemented")
+):
+    """Change a user's password."""
+    helper = get_helper_client()
+    try:
+        await helper.set_password(username, password)
+    except PrivilegedHelperError as e:
+        return templates.TemplateResponse(
+            "partials/error.html",
+            {"request": request, "error": e.message},
+            status_code=400,
+        )
+    return await _render_users_list(request)
 
 
-@router.put("/{username}")
-async def update_user(
-    username: str,
-    request: UpdateUserRequest,
-    current_user: AdminUser = Depends(get_current_user),
-) -> MailUser:
-    """Update a mail user (password, quota)."""
-    # TODO: Implement via privileged helper
-    raise HTTPException(status_code=501, detail="Not implemented")
-
-
-@router.delete("/{username}", status_code=204)
+@router.delete("/{username}")
 async def delete_user(
+    request: Request,
     username: str,
-    delete_mail: bool = Query(default=False),
     current_user: AdminUser = Depends(get_current_user),
 ):
     """Delete a mail user."""
-    # TODO: Implement via privileged helper
-    raise HTTPException(status_code=501, detail="Not implemented")
-
-
-@router.get("/{username}/quota")
-async def get_user_quota(
-    username: str,
-    current_user: AdminUser = Depends(get_current_user),
-):
-    """Get quota usage for a user."""
-    # TODO: Implement via privileged helper
-    raise HTTPException(status_code=501, detail="Not implemented")
+    helper = get_helper_client()
+    try:
+        await helper.delete_user(username, delete_mail=False)
+    except PrivilegedHelperError as e:
+        return templates.TemplateResponse(
+            "partials/error.html",
+            {"request": request, "error": e.message},
+            status_code=400,
+        )
+    return await _render_users_list(request)
