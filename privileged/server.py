@@ -332,7 +332,7 @@ def cmd_list_queue(params: dict[str, Any]) -> dict[str, Any]:
     queue_name = params.get("queue_name")
 
     # Use postqueue -j for JSON output
-    stdout, stderr, rc = run_command(["postqueue", "-j"])
+    stdout, stderr, rc = run_command(["/usr/sbin/postqueue", "-j"])
 
     if rc != 0:
         raise CommandError(f"Failed to list queue: {stderr}", 500)
@@ -378,7 +378,7 @@ def cmd_queue_stats(params: dict[str, Any]) -> dict[str, Any]:
 
 def cmd_flush_queue(params: dict[str, Any]) -> dict[str, Any]:
     """Flush the entire mail queue."""
-    stdout, stderr, rc = run_command(["postqueue", "-f"])
+    stdout, stderr, rc = run_command(["/usr/sbin/postqueue", "-f"])
 
     if rc != 0:
         raise CommandError(f"Failed to flush queue: {stderr}", 500)
@@ -391,7 +391,7 @@ def cmd_flush_message(params: dict[str, Any]) -> dict[str, Any]:
     """Flush a specific message."""
     queue_id = validate_queue_id(params.get("queue_id", ""))
 
-    stdout, stderr, rc = run_command(["postqueue", "-i", queue_id])
+    stdout, stderr, rc = run_command(["/usr/sbin/postqueue", "-i", queue_id])
 
     if rc != 0:
         raise CommandError(f"Failed to flush message: {stderr}", 500)
@@ -404,7 +404,7 @@ def cmd_delete_message(params: dict[str, Any]) -> dict[str, Any]:
     """Delete a message from the queue."""
     queue_id = validate_queue_id(params.get("queue_id", ""))
 
-    stdout, stderr, rc = run_command(["postsuper", "-d", queue_id])
+    stdout, stderr, rc = run_command(["/usr/sbin/postsuper", "-d", queue_id])
 
     if rc != 0:
         raise CommandError(f"Failed to delete message: {stderr}", 500)
@@ -417,7 +417,7 @@ def cmd_hold_message(params: dict[str, Any]) -> dict[str, Any]:
     """Put a message on hold."""
     queue_id = validate_queue_id(params.get("queue_id", ""))
 
-    stdout, stderr, rc = run_command(["postsuper", "-h", queue_id])
+    stdout, stderr, rc = run_command(["/usr/sbin/postsuper", "-h", queue_id])
 
     if rc != 0:
         raise CommandError(f"Failed to hold message: {stderr}", 500)
@@ -430,7 +430,7 @@ def cmd_release_message(params: dict[str, Any]) -> dict[str, Any]:
     """Release a message from hold."""
     queue_id = validate_queue_id(params.get("queue_id", ""))
 
-    stdout, stderr, rc = run_command(["postsuper", "-H", queue_id])
+    stdout, stderr, rc = run_command(["/usr/sbin/postsuper", "-H", queue_id])
 
     if rc != 0:
         raise CommandError(f"Failed to release message: {stderr}", 500)
