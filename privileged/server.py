@@ -85,6 +85,7 @@ def run_command(cmd: list[str], input_data: str | None = None) -> tuple[str, str
     Returns (stdout, stderr, returncode).
     """
     logger.info(f"Executing: {' '.join(cmd)}")
+    env = {**os.environ, "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
     try:
         result = subprocess.run(
             cmd,
@@ -92,6 +93,7 @@ def run_command(cmd: list[str], input_data: str | None = None) -> tuple[str, str
             text=True,
             timeout=30,
             input=input_data,
+            env=env,
         )
         return result.stdout, result.stderr, result.returncode
     except subprocess.TimeoutExpired:

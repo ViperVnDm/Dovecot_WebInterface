@@ -1,5 +1,6 @@
 """HTMX partial template routes."""
 
+import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -7,6 +8,8 @@ from pathlib import Path
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import AdminUser
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
@@ -282,7 +285,8 @@ async def logs_entries(
             service=service if service else None,
             search=search if search else None,
         )
-    except PrivilegedHelperError:
+    except PrivilegedHelperError as e:
+        logger.error(f"Failed to read logs from helper: {e.message}")
         entries = []
 
     return templates.TemplateResponse(
