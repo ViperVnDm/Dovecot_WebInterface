@@ -73,6 +73,35 @@ async def delete_rule(
     return await _render_rules(request, db)
 
 
+@router.patch("/rules/{rule_id}")
+async def update_rule(
+    request: Request,
+    rule_id: int,
+    name: str = Form(...),
+    rule_type: str = Form(...),
+    threshold_operator: str = Form(...),
+    threshold_value: float = Form(...),
+    notification_type: str = Form(...),
+    notification_target: str = Form(...),
+    cooldown_minutes: int = Form(default=60),
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing alert rule."""
+    result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule:
+        rule.name = name
+        rule.rule_type = rule_type
+        rule.threshold_operator = threshold_operator
+        rule.threshold_value = threshold_value
+        rule.notification_type = notification_type
+        rule.notification_target = notification_target
+        rule.cooldown_minutes = cooldown_minutes
+        await db.commit()
+    return await _render_rules(request, db)
+
+
 @router.post("/rules/{rule_id}/toggle")
 async def toggle_rule(
     request: Request,
