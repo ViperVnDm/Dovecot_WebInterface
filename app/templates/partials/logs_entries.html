@@ -1,10 +1,25 @@
 <!-- Log entries list -->
 {% if entries %}
 {% for entry in entries %}
-<div class="py-1 {% if entry.level == 'error' %}text-red-400{% elif entry.level == 'warning' %}text-yellow-400{% else %}text-green-400{% endif %}">
+<div class="py-1 group {% if entry.level == 'error' %}text-red-400{% elif entry.level == 'warning' %}text-yellow-400{% else %}text-green-400{% endif %}">
     <span class="text-gray-500">{{ entry.timestamp }}</span>
     <span class="text-blue-400">[{{ entry.service }}{% if entry.pid %}:{{ entry.pid }}{% endif %}]</span>
     {{ entry.message }}
+    {% if entry.ips %}
+    <span class="ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {% for ip in entry.ips %}
+        <button hx-post="/api/logs/ban-ip"
+                hx-vals='{"ip": "{{ ip }}"}'
+                hx-target="#banned-ips-list"
+                hx-swap="innerHTML"
+                hx-confirm="Ban IP {{ ip }}? This will block all traffic from this address."
+                title="Ban {{ ip }}"
+                class="text-xs px-1.5 py-0.5 bg-red-700 hover:bg-red-600 text-white rounded ml-1 font-sans">
+            Ban {{ ip }}
+        </button>
+        {% endfor %}
+    </span>
+    {% endif %}
 </div>
 {% endfor %}
 {% else %}

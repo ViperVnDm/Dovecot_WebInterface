@@ -72,6 +72,7 @@
                 <option value="postfix">Postfix</option>
                 <option value="dovecot">Dovecot</option>
                 <option value="spamd">SpamAssassin</option>
+                <option value="webadmin">Web Interface</option>
             </select>
             <input type="text"
                    name="search"
@@ -100,6 +101,23 @@
                 <div class="animate-spin inline-block w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
                 <p class="mt-2">Loading logs...</p>
             </div>
+        </div>
+    </div>
+
+    <!-- Banned IPs -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-900">Banned IPs</h2>
+            <button hx-get="/partials/logs/banned"
+                    hx-target="#banned-ips-list"
+                    class="text-sm text-blue-600 hover:text-blue-800">Refresh</button>
+        </div>
+        <div id="banned-ips-list"
+             class="p-4"
+             hx-get="/partials/logs/banned"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <p class="text-gray-400 text-sm">Loading...</p>
         </div>
     </div>
 </div>

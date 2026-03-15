@@ -269,6 +269,24 @@ async def logs_stats(
     )
 
 
+@router.get("/logs/banned")
+async def logs_banned(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+):
+    """Banned IP list."""
+    helper = get_helper_client()
+    try:
+        banned_ips = await helper.list_banned_ips()
+    except PrivilegedHelperError:
+        banned_ips = []
+
+    return templates.TemplateResponse(
+        "partials/logs_banned.html",
+        {"request": request, "banned_ips": banned_ips},
+    )
+
+
 @router.get("/logs/entries")
 async def logs_entries(
     request: Request,

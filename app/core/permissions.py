@@ -170,6 +170,20 @@ class PrivilegedHelperClient:
         response = await self._send_command("mailbox_sizes", {})
         return response.get("mailboxes", [])
 
+    # IP ban commands
+    async def ban_ip(self, ip: str) -> dict[str, Any]:
+        """Block an IP via UFW."""
+        return await self._send_command("ban_ip", {"ip": ip})
+
+    async def unban_ip(self, ip: str) -> dict[str, Any]:
+        """Remove a UFW ban for an IP."""
+        return await self._send_command("unban_ip", {"ip": ip})
+
+    async def list_banned_ips(self) -> list[str]:
+        """List IPs currently blocked by UFW."""
+        response = await self._send_command("list_banned_ips", {})
+        return response.get("banned_ips", [])
+
 
 # Singleton instance
 _helper_client: PrivilegedHelperClient | None = None

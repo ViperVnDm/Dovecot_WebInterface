@@ -2,10 +2,11 @@
 
 from datetime import datetime
 from enum import Enum
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.core.security import get_current_user
+from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import AdminUser
 
 router = APIRouter()
@@ -108,6 +109,45 @@ async def get_connection_stats(
         successful_logins=0,
         failed_logins=0,
     )
+
+
+@router.post("/ban-ip")
+async def ban_ip(
+    ip: str = Form(...),
+    current_user: AdminUser = Depends(get_current_user),
+) -> dict:
+    """Block an IP address via UFW."""
+    helper = get_helper_client()
+    try:
+        return await helper.ban_ip(ip)
+    except PrivilegedHelperError as e:
+        raise HTTPException(status_code=e.code, detail=e.message)
+
+
+@router.delete("/ban-ip/{ip}")
+async def unban_ip(
+    ip: str,
+    current_user: AdminUser = Depends(get_current_user),
+) -> dict:
+    """Remove a UFW ban for an IP address."""
+    helper = get_helper_client()
+    try:
+        return await helper.unban_ip(ip)
+    except PrivilegedHelperError as e:
+        raise HTTPException(status_code=e.code, detail=e.message)
+
+
+@router.get("/banned-ips")
+async def list_banned_ips(
+    current_user: AdminUser = Depends(get_current_user),
+) -> dict:
+    """List IPs currently blocked by UFW."""
+    helper = get_helper_client()
+    try:
+        ips = await helper.list_banned_ips()
+        return {"banned_ips": ips}
+    except PrivilegedHelperError as e:
+        raise HTTPException(status_code=e.code, detail=e.message)
 
 
 @router.websocket("/ws")

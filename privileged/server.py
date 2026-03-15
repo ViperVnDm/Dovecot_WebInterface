@@ -37,6 +37,7 @@ MAIL_SPOOL_PATH = Path(os.environ.get("MAIL_SPOOL_PATH", "/var/mail"))
 # Validation patterns
 USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 QUEUE_ID_PATTERN = re.compile(r"^[A-F0-9]{10,12}$")
+IP_ADDR_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
 
 # Reserved usernames that cannot be created/deleted
 RESERVED_USERNAMES = frozenset([
@@ -452,11 +453,18 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
     service = params.get("service")
     search = params.get("search")
 
-    if not MAIL_LOG_PATH.exists():
-        return {"entries": []}
-
-    # Read last N lines
-    stdout, stderr, rc = run_command(["tail", "-n", str(lines), str(MAIL_LOG_PATH)])
+    # Web interface logs come from journald
+    if service == "webadmin":
+        stdout, stderr, rc = run_command([
+            "journalctl", "-u", "dovecot-webadmin", "-n", str(lines),
+            "--no-pager", "-o", "short-iso",
+        ])
+        if rc != 0:
+            return {"entries": []}
+    else:
+        if not MAIL_LOG_PATH.exists():
+            return {"entries": []}
+        stdout, stderr, rc = run_command(["tail", "-n", str(lines), str(MAIL_LOG_PATH)])
 
     if rc != 0:
         raise CommandError(f"Failed to read logs: {stderr}", 500)
@@ -493,6 +501,9 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
             if level and entry_level != level:
                 continue
 
+            # Extract IPv4 addresses for the ban UI
+            ips = list(dict.fromkeys(IP_ADDR_RE.findall(message)))
+
             entries.append({
                 "timestamp": timestamp,
                 "host": host,
@@ -500,6 +511,7 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
                 "pid": int(pid) if pid else None,
                 "level": entry_level,
                 "message": message,
+                "ips": ips,
             })
 
     return {"entries": entries}
@@ -576,6 +588,61 @@ def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
     return {"mailboxes": mailboxes}
 
 
+# ============== IP Ban Commands ==============
+
+
+def _validate_ip(ip: str) -> str:
+    """Validate IPv4 address. Raises CommandError on failure."""
+    if not IP_ADDR_RE.fullmatch(ip.strip()):
+        raise CommandError("Invalid IPv4 address format", 400)
+    parts = ip.split(".")
+    if not all(0 <= int(p) <= 255 for p in parts):
+        raise CommandError("Invalid IPv4 address: octet out of range", 400)
+    if ip in ("127.0.0.1", "0.0.0.0"):
+        raise CommandError("Cannot ban loopback or wildcard address", 400)
+    return ip.strip()
+
+
+def cmd_ban_ip(params: dict[str, Any]) -> dict[str, Any]:
+    """Block an IP address using UFW."""
+    ip = _validate_ip(params.get("ip", ""))
+    stdout, stderr, rc = run_command(["ufw", "insert", "1", "deny", "from", ip])
+    if rc != 0:
+        raise CommandError(f"Failed to ban IP: {stderr.strip()}", 500)
+    logger.info(f"Banned IP: {ip}")
+    return {"success": True, "ip": ip}
+
+
+def cmd_unban_ip(params: dict[str, Any]) -> dict[str, Any]:
+    """Remove a UFW ban for an IP address."""
+    ip = _validate_ip(params.get("ip", ""))
+    stdout, stderr, rc = run_command(["ufw", "delete", "deny", "from", ip])
+    if rc != 0:
+        raise CommandError(f"Failed to unban IP: {stderr.strip()}", 500)
+    logger.info(f"Unbanned IP: {ip}")
+    return {"success": True, "ip": ip}
+
+
+def cmd_list_banned_ips(params: dict[str, Any]) -> dict[str, Any]:
+    """List IPs currently blocked by UFW DENY rules."""
+    stdout, stderr, rc = run_command(["ufw", "status"])
+    if rc != 0:
+        raise CommandError(f"Failed to get UFW status: {stderr.strip()}", 500)
+
+    banned = []
+    for line in stdout.splitlines():
+        # Match lines like: "Anywhere   DENY IN   1.2.3.4"
+        if "DENY" not in line:
+            continue
+        m = IP_ADDR_RE.search(line)
+        if m:
+            ip = m.group(1)
+            if ip not in banned:
+                banned.append(ip)
+
+    return {"banned_ips": banned}
+
+
 # ============== Command Dispatcher ==============
 
 
@@ -600,6 +667,10 @@ COMMANDS = {
     "read_logs": cmd_read_logs,
     "get_log_stats": cmd_get_log_stats,
     "mailbox_sizes": cmd_mailbox_sizes,
+    # IP banning
+    "ban_ip": cmd_ban_ip,
+    "unban_ip": cmd_unban_ip,
+    "list_banned_ips": cmd_list_banned_ips,
 }
 
 
