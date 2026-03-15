@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
@@ -410,7 +411,10 @@ async def alerts_history(
 ):
     """Alert history list."""
     result = await db.execute(
-        select(AlertHistory).order_by(AlertHistory.triggered_at.desc()).limit(50)
+        select(AlertHistory)
+        .options(selectinload(AlertHistory.rule))
+        .order_by(AlertHistory.triggered_at.desc())
+        .limit(50)
     )
     history = result.scalars().all()
     return templates.TemplateResponse(

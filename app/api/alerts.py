@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
-from app.database import get_db, AdminUser, AlertRule
+from app.database import get_db, AdminUser, AlertRule, AppSetting
+from app.services.alert_checker import DEFAULT_CHECK_INTERVAL
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
@@ -80,3 +81,44 @@ async def toggle_rule(
         rule.is_enabled = not rule.is_enabled
         await db.commit()
     return await _render_rules(request, db)
+
+
+@router.get("/settings")
+async def get_alert_settings(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return alert settings partial."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == "alert_check_interval")
+    )
+    setting = result.scalar_one_or_none()
+    interval = int(setting.value) if setting else DEFAULT_CHECK_INTERVAL
+    return templates.TemplateResponse(
+        "partials/alerts_settings.html",
+        {"request": request, "check_interval": interval},
+    )
+
+
+@router.post("/settings")
+async def update_alert_settings(
+    request: Request,
+    check_interval: int = Form(..., ge=1, le=1440),
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update alert settings."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == "alert_check_interval")
+    )
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = str(check_interval)
+    else:
+        db.add(AppSetting(key="alert_check_interval", value=str(check_interval)))
+    await db.commit()
+    return templates.TemplateResponse(
+        "partials/alerts_settings.html",
+        {"request": request, "check_interval": check_interval, "saved": True},
+    )

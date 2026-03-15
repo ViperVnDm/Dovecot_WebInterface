@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.database import init_db
+from app.services.alert_checker import alert_checker_loop
 
 # Import routers
 from app.api import auth, users, queue, logs, storage, partials, alerts
@@ -28,10 +30,14 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    # Startup
     await init_db()
+    checker_task = asyncio.create_task(alert_checker_loop())
     yield
-    # Shutdown (cleanup if needed)
+    checker_task.cancel()
+    try:
+        await checker_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(

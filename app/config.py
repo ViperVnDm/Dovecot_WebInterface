@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Privileged helper
     helper_socket_path: Path = Path("/run/dovecot-webadmin/helper.sock")
 
+    # SMTP for alert notifications (defaults to local Postfix)
+    smtp_host: str = "localhost"
+    smtp_port: int = 25
+    smtp_from: str = "alerts@localhost"
+
     # Rate limiting
     login_rate_limit: str = "5/minute"
 

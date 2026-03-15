@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float, UniqueConstraint
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -104,6 +104,20 @@ class AlertHistory(Base):
     notification_sent: Mapped[bool] = mapped_column(Boolean, default=False)
 
     rule: Mapped["AlertRule"] = relationship("AlertRule", back_populates="history")
+
+
+class AppSetting(Base):
+    """Key-value store for application settings."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class StorageHistory(Base):

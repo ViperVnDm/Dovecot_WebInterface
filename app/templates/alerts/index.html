@@ -16,6 +16,20 @@
         </button>
     </div>
 
+    <!-- Settings -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Checker Settings</h2>
+        </div>
+        <div id="alerts-settings"
+             class="px-6 py-4"
+             hx-get="/api/alerts/settings"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    </div>
+
     <!-- Active alerts -->
     <div class="bg-white rounded-lg shadow"
          id="active-alerts"
