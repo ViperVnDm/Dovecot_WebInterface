@@ -209,3 +209,38 @@ async def alert_checker_loop() -> None:
             await check_alerts()
         except Exception:
             logger.exception("Unhandled error in alert checker")
+
+
+async def record_storage_snapshot() -> None:
+    """Record a disk usage snapshot to StorageHistory."""
+    from app.database import StorageHistory
+    try:
+        usage = shutil.disk_usage(str(settings.mail_spool_path))
+    except Exception as e:
+        logger.error(f"Storage snapshot failed: {e}")
+        return
+
+    async with async_session() as db:
+        db.add(StorageHistory(
+            path=str(settings.mail_spool_path),
+            used_bytes=usage.used,
+            total_bytes=usage.total,
+        ))
+        await db.commit()
+    logger.debug("Storage snapshot recorded")
+
+
+async def storage_collector_loop() -> None:
+    """Take a storage snapshot once per hour."""
+    logger.info("Storage collector background task started")
+    # Take an immediate snapshot on startup so the chart has data right away
+    try:
+        await record_storage_snapshot()
+    except Exception:
+        logger.exception("Initial storage snapshot failed")
+    while True:
+        await asyncio.sleep(3600)  # 1 hour
+        try:
+            await record_storage_snapshot()
+        except Exception:
+            logger.exception("Unhandled error in storage collector")

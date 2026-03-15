@@ -1,6 +1,7 @@
 """HTMX partial template routes."""
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -399,10 +400,27 @@ async def storage_mailboxes(
 async def storage_history(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Storage usage history chart."""
-    # TODO: Implement from database
-    history = []
+    """Storage usage history chart — one point per day for the last 30 days."""
+    from app.database import StorageHistory
+    from datetime import timedelta, date
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    result = await db.execute(
+        select(StorageHistory)
+        .where(StorageHistory.recorded_at >= cutoff)
+        .order_by(StorageHistory.recorded_at.asc())
+    )
+    rows = result.scalars().all()
+
+    # Keep one snapshot per calendar day (the latest of the day)
+    by_day: dict[date, StorageHistory] = {}
+    for row in rows:
+        day = row.recorded_at.date()
+        by_day[day] = row  # later rows overwrite earlier ones
+
+    history = list(by_day.values())
 
     return templates.TemplateResponse(
         "partials/storage_history.html",

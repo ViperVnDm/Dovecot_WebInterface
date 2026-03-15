@@ -14,7 +14,7 @@ from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.database import init_db
-from app.services.alert_checker import alert_checker_loop
+from app.services.alert_checker import alert_checker_loop, storage_collector_loop
 
 # Import routers
 from app.api import auth, users, queue, logs, storage, partials, alerts
@@ -32,12 +32,15 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     await init_db()
     checker_task = asyncio.create_task(alert_checker_loop())
+    storage_task = asyncio.create_task(storage_collector_loop())
     yield
     checker_task.cancel()
-    try:
-        await checker_task
-    except asyncio.CancelledError:
-        pass
+    storage_task.cancel()
+    for task in (checker_task, storage_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
