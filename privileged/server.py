@@ -461,20 +461,35 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
         ])
         if rc != 0:
             return {"entries": []}
+        raw_lines = stdout.strip().split("\n") if stdout.strip() else []
+    elif service:
+        # Grep the full log for the service name so sparse services (e.g.
+        # spamd) aren't drowned out by tail returning only recent lines that
+        # happen to contain only postfix/dovecot entries.
+        if not MAIL_LOG_PATH.exists():
+            return {"entries": []}
+        try:
+            with open(MAIL_LOG_PATH, errors="replace") as _f:
+                raw_lines = [
+                    ln.rstrip() for ln in _f
+                    if service.lower() in ln.lower()
+                ][-lines:]
+        except OSError as exc:
+            raise CommandError(f"Failed to read log: {exc}", 500)
     else:
         if not MAIL_LOG_PATH.exists():
             return {"entries": []}
         stdout, stderr, rc = run_command(["tail", "-n", str(lines), str(MAIL_LOG_PATH)])
-
-    if rc != 0:
-        raise CommandError(f"Failed to read logs: {stderr}", 500)
+        if rc != 0:
+            raise CommandError(f"Failed to read logs: {stderr}", 500)
+        raw_lines = stdout.strip().split("\n") if stdout.strip() else []
 
     entries = []
     log_pattern = re.compile(
         r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\w.+:-]*|\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s+(.*)"
     )
 
-    for line in stdout.strip().split("\n"):
+    for line in raw_lines:
         if not line:
             continue
 
