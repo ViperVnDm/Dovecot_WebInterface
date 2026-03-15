@@ -287,6 +287,21 @@ async def logs_banned(
     )
 
 
+@router.get("/logs/allowlist")
+async def logs_allowlist(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Never-ban allowlist."""
+    from app.api.logs import load_allowlist
+    allowlist = await load_allowlist(db)
+    return templates.TemplateResponse(
+        "partials/logs_allowlist.html",
+        {"request": request, "allowlist": allowlist},
+    )
+
+
 @router.get("/logs/entries")
 async def logs_entries(
     request: Request,
@@ -294,9 +309,13 @@ async def logs_entries(
     service: str = "",
     search: str = "",
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Log entries list."""
+    from app.api.logs import load_allowlist, is_allowlisted
     helper = get_helper_client()
+
+    allowlist = await load_allowlist(db)
 
     try:
         entries = await helper.read_logs(
@@ -308,6 +327,10 @@ async def logs_entries(
     except PrivilegedHelperError as e:
         logger.error(f"Failed to read logs from helper: {e.message}")
         entries = []
+
+    # Strip allowlisted IPs so Ban buttons never appear for protected addresses
+    for entry in entries:
+        entry["ips"] = [ip for ip in entry.get("ips", []) if not is_allowlisted(ip, allowlist)]
 
     return templates.TemplateResponse(
         "partials/logs_entries.html",

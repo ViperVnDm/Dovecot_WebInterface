@@ -1,0 +1,45 @@
+<!-- Never-ban allowlist -->
+<div class="space-y-3">
+    <!-- Add form -->
+    <form hx-post="/api/logs/allowlist"
+          hx-target="#allowlist-list"
+          hx-swap="outerHTML"
+          hx-on::after-request="this.reset()"
+          class="flex gap-2">
+        <input type="text"
+               name="entry"
+               required
+               placeholder="IP address or CIDR (e.g. 192.168.1.0/24)"
+               class="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg
+                      focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono">
+        <button type="submit"
+                class="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg">
+            Add
+        </button>
+    </form>
+
+    <!-- Current entries -->
+    <div id="allowlist-list">
+        {% if allowlist %}
+        <div class="flex flex-wrap gap-2">
+            {% for entry in allowlist %}
+            <div class="flex items-center gap-1 bg-green-50 border border-green-200 rounded px-3 py-1">
+                <span class="font-mono text-sm text-green-800">{{ entry }}</span>
+                <button hx-delete="/api/logs/allowlist/{{ entry }}"
+                        hx-target="#allowlist-list"
+                        hx-swap="outerHTML"
+                        hx-confirm="Remove {{ entry }} from the never-ban list?"
+                        title="Remove"
+                        class="ml-1 text-green-400 hover:text-green-700">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-500">No entries — all IPs can be banned.</p>
+        {% endif %}
+    </div>
+</div>

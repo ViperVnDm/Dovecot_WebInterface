@@ -105,20 +105,37 @@
         </div>
     </div>
 
-    <!-- Banned IPs -->
-    <div class="bg-white rounded-lg shadow">
-        <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-            <h2 class="text-lg font-semibold text-gray-900">Banned IPs</h2>
-            <button hx-get="/partials/logs/banned"
-                    hx-target="#banned-ips-list"
-                    class="text-sm text-blue-600 hover:text-blue-800">Refresh</button>
+    <!-- Banned IPs and Allowlist side by side -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Banned IPs -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-gray-900">Banned IPs</h2>
+                <button hx-get="/partials/logs/banned"
+                        hx-target="#banned-ips-list"
+                        class="text-sm text-blue-600 hover:text-blue-800">Refresh</button>
+            </div>
+            <div id="banned-ips-list"
+                 class="p-4"
+                 hx-get="/partials/logs/banned"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
         </div>
-        <div id="banned-ips-list"
-             class="p-4"
-             hx-get="/partials/logs/banned"
-             hx-trigger="load"
-             hx-swap="innerHTML">
-            <p class="text-gray-400 text-sm">Loading...</p>
+
+        <!-- Never-ban allowlist -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-4 py-3 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Never-Ban List</h2>
+                <p class="text-xs text-gray-500 mt-0.5">IPs/CIDRs here will never show a Ban button</p>
+            </div>
+            <div class="p-4"
+                 hx-get="/partials/logs/allowlist"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
         </div>
     </div>
 </div>
