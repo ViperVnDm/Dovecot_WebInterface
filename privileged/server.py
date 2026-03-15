@@ -299,11 +299,14 @@ def cmd_list_users(params: dict[str, Any]) -> dict[str, Any]:
     for user in pwd.getpwall():
         in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
         if in_mail_group and user.pw_name not in RESERVED_USERNAMES:
+            size_bytes, message_count = _user_mail_size(user.pw_dir)
             users.append({
                 "username": user.pw_name,
                 "uid": user.pw_uid,
                 "gid": user.pw_gid,
                 "home": user.pw_dir,
+                "mailbox_size_bytes": size_bytes,
+                "mailbox_message_count": message_count,
             })
 
     return {"users": users}
@@ -592,32 +595,55 @@ def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
-    """Get mailbox sizes for all users."""
-    mailboxes = []
+MAIL_SUBDIR = os.environ.get("USER_MAIL_SUBDIR", "Mail")
 
-    if not MAIL_SPOOL_PATH.exists():
-        return {"mailboxes": []}
 
-    for user_dir in MAIL_SPOOL_PATH.iterdir():
-        if user_dir.is_dir():
-            # Calculate directory size
-            total_size = 0
-            message_count = 0
-            for f in user_dir.rglob("*"):
-                if f.is_file():
-                    total_size += f.stat().st_size
+def _user_mail_size(home_dir: str) -> tuple[int, int]:
+    """Return (size_bytes, message_count) for a user's ~/Mail directory.
+
+    Size includes all files (mail + Dovecot indexes = true disk usage).
+    Message count only includes files inside cur/ and new/ subdirectories
+    (actual Maildir messages, not Dovecot metadata files).
+    """
+    mail_path = Path(home_dir) / MAIL_SUBDIR
+    if not mail_path.exists():
+        return 0, 0
+    total_size = 0
+    message_count = 0
+    for f in mail_path.rglob("*"):
+        if f.is_file():
+            try:
+                total_size += f.stat().st_size
+                if f.parent.name in ("cur", "new"):
                     message_count += 1
+            except OSError:
+                pass
+    return total_size, message_count
 
-            mailboxes.append({
-                "username": user_dir.name,
-                "size_bytes": total_size,
-                "message_count": message_count,
-            })
 
-    # Sort by size descending
+def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
+    """Get mailbox sizes for all mail users (reads ~/Mail/)."""
+    try:
+        mail_group = grp.getgrnam(MAIL_GROUP)
+        mail_gid = mail_group.gr_gid
+        mail_members = set(mail_group.gr_mem)
+    except KeyError:
+        mail_gid = None
+        mail_members = set()
+
+    mailboxes = []
+    for user in pwd.getpwall():
+        in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
+        if not in_mail_group or user.pw_name in RESERVED_USERNAMES:
+            continue
+        size_bytes, message_count = _user_mail_size(user.pw_dir)
+        mailboxes.append({
+            "username": user.pw_name,
+            "size_bytes": size_bytes,
+            "message_count": message_count,
+        })
+
     mailboxes.sort(key=lambda x: x["size_bytes"], reverse=True)
-
     return {"mailboxes": mailboxes}
 
 
