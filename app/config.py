@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # SMTP for alert notifications (defaults to local Postfix)
     smtp_host: str = "localhost"
     smtp_port: int = 25
-    smtp_from: str = "alerts@localhost"
+    smtp_from: str = ""  # Must be set in .env, e.g. alerts@yourdomain.com
 
     # Rate limiting
     login_rate_limit: str = "5/minute"

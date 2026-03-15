@@ -70,6 +70,9 @@ def _evaluate(current: float, operator: str, threshold: float) -> bool:
 
 def _send_email(rule: AlertRule, current_value: float, message: str) -> bool:
     """Send an email notification via local SMTP. Returns True on success."""
+    if not settings.smtp_from:
+        logger.error("SMTP_FROM is not configured — set it in .env (e.g. alerts@yourdomain.com)")
+        return False
     try:
         body = (
             f"Alert rule '{rule.name}' has triggered.\n\n"
