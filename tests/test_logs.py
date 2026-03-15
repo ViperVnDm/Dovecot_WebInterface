@@ -102,7 +102,8 @@ async def test_duplicate_allowlist_entry_not_added_twice(auth_client):
     await ac.post("/api/logs/allowlist", data={"entry": "1.2.3.4"})
     await ac.post("/api/logs/allowlist", data={"entry": "1.2.3.4"})
     resp = await ac.get("/partials/logs/allowlist")
-    assert resp.text.count("1.2.3.4") == 1
+    # Each entry renders one <span> with the IP — count spans to detect duplicates
+    assert resp.text.count(">1.2.3.4<") == 1
 
 
 @pytest.mark.asyncio

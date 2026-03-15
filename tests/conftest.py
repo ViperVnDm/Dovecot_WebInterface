@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import os
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -8,6 +9,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.database import Base, AdminUser, get_db
 from app.core.security import hash_password
+from app.config import get_settings
+
+# Clear cached settings so COOKIE_SECURE=false takes effect
+get_settings.cache_clear()
+
+# Disable secure-only cookies so the test HTTP client (plain HTTP) can send them.
+os.environ["COOKIE_SECURE"] = "false"
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 TEST_USERNAME = "testadmin"
@@ -86,7 +94,10 @@ async def client(db_engine):
 
     with patch("app.main.alert_checker_loop", side_effect=_noop), \
          patch("app.main.storage_collector_loop", side_effect=_noop), \
-         patch("app.core.permissions.get_helper_client", return_value=mock_helper):
+         patch("app.core.permissions.get_helper_client", return_value=mock_helper), \
+         patch("app.api.logs.get_helper_client", return_value=mock_helper), \
+         patch("app.api.partials.get_helper_client", return_value=mock_helper), \
+         patch("app.api.users.get_helper_client", return_value=mock_helper):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:

@@ -11,6 +11,7 @@ from app.core.security import (
     get_current_user,
     delete_session,
 )
+from app.config import get_settings
 from app.database import get_db, AdminUser
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -74,7 +75,7 @@ async def login(
         key="session",
         value=session_token,
         httponly=True,
-        secure=True,
+        secure=get_settings().cookie_secure,
         samesite="lax",
         max_age=86400,  # 24 hours
     )

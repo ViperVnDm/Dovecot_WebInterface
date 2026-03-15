@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # Security
     bcrypt_rounds: int = 12
+    cookie_secure: bool = True
 
 
 @lru_cache

@@ -3,7 +3,9 @@
     "allow": [
       "WebSearch",
       "Bash(chmod:*)",
-      "Bash(python3 -m py_compile:*)"
+      "Bash(python3 -m py_compile:*)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(pip install:*)"
     ]
   }
 }

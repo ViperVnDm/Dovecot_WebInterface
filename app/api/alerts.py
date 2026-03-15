@@ -122,9 +122,10 @@ async def toggle_rule(
 async def get_alert_settings(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return alert settings partial."""
-    cfg = await get_all_settings()
+    cfg = await get_all_settings(db)
     return templates.TemplateResponse(
         "partials/alerts_settings.html",
         {"request": request, **cfg},

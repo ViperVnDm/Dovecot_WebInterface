@@ -26,11 +26,15 @@ SETTING_SMTP_HOST = "smtp_host"
 SETTING_SMTP_PORT = "smtp_port"
 
 
-async def get_all_settings() -> dict:
+async def get_all_settings(db=None) -> dict:
     """Load all alert-related settings from DB, merging with config defaults."""
-    async with async_session() as db:
+    if db is not None:
         result = await db.execute(select(AppSetting))
         rows = {r.key: r.value for r in result.scalars().all()}
+    else:
+        async with async_session() as session:
+            result = await session.execute(select(AppSetting))
+            rows = {r.key: r.value for r in result.scalars().all()}
 
     return {
         "check_interval": max(1, int(rows.get(SETTING_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL))),

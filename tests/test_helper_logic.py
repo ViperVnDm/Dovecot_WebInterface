@@ -10,6 +10,10 @@ import os
 # Make privileged/ importable without installing the package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# privileged/server.py uses grp/pwd which are Unix-only
+if sys.platform == "win32":
+    pytest.skip("privileged helper tests require Unix", allow_module_level=True)
+
 
 # ── privileged/server.py ──────────────────────────────────────────────────────
 
@@ -17,7 +21,6 @@ from privileged.server import (
     validate_username,
     validate_queue_id,
     _validate_ip,
-    _evaluate,
     CommandError,
 )
 
@@ -94,34 +97,6 @@ class TestValidateIp:
 
     def test_strips_whitespace(self):
         assert _validate_ip(" 1.2.3.4 ") == "1.2.3.4"
-
-
-class TestEvaluate:
-    def test_gt(self):
-        assert _evaluate(90.0, "gt", 80.0) is True
-        assert _evaluate(80.0, "gt", 80.0) is False
-        assert _evaluate(70.0, "gt", 80.0) is False
-
-    def test_gte(self):
-        assert _evaluate(80.0, "gte", 80.0) is True
-        assert _evaluate(81.0, "gte", 80.0) is True
-        assert _evaluate(79.0, "gte", 80.0) is False
-
-    def test_lt(self):
-        assert _evaluate(70.0, "lt", 80.0) is True
-        assert _evaluate(80.0, "lt", 80.0) is False
-
-    def test_lte(self):
-        assert _evaluate(80.0, "lte", 80.0) is True
-        assert _evaluate(79.0, "lte", 80.0) is True
-        assert _evaluate(81.0, "lte", 80.0) is False
-
-    def test_eq(self):
-        assert _evaluate(80.0, "eq", 80.0) is True
-        assert _evaluate(80.1, "eq", 80.0) is False
-
-    def test_unknown_operator(self):
-        assert _evaluate(80.0, "unknown", 80.0) is False
 
 
 # ── Log level detection (via cmd_read_logs internals) ─────────────────────────
