@@ -405,7 +405,10 @@ async def storage_overview(
         if h.rule is None or h.rule_id in seen:
             continue
         seen.add(h.rule_id)
-        cooldown_end = h.triggered_at + timedelta(minutes=h.rule.cooldown_minutes)
+        triggered_at = h.triggered_at
+        if triggered_at.tzinfo is None:
+            triggered_at = triggered_at.replace(tzinfo=timezone.utc)
+        cooldown_end = triggered_at + timedelta(minutes=h.rule.cooldown_minutes)
         if now <= cooldown_end:
             alerts.append({"rule_name": h.rule.name, "message": h.message})
 
