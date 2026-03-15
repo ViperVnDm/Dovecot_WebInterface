@@ -157,11 +157,28 @@ async def dashboard_recent_activity(
 async def dashboard_alerts(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Active alerts for dashboard."""
-    # TODO: Implement alert checking
-    alerts = []
-
+    """Active alerts for dashboard — last 24 h of triggered rules."""
+    from datetime import timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    result = await db.execute(
+        select(AlertHistory)
+        .options(selectinload(AlertHistory.rule))
+        .where(AlertHistory.triggered_at >= cutoff)
+        .order_by(AlertHistory.triggered_at.desc())
+        .limit(10)
+    )
+    history = result.scalars().all()
+    alerts = [
+        {
+            "rule_name": h.rule.name,
+            "message": h.message,
+            "triggered_at": h.triggered_at.strftime("%Y-%m-%d %H:%M UTC"),
+        }
+        for h in history
+        if h.rule is not None
+    ]
     return templates.TemplateResponse(
         "partials/dashboard_alerts.html",
         {"request": request, "alerts": alerts},
@@ -346,6 +363,7 @@ async def logs_entries(
 async def storage_overview(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Storage overview cards."""
     import shutil
@@ -368,8 +386,28 @@ async def storage_overview(
     except Exception:
         disk_info = None
 
-    # TODO: Get active alerts
+    # Active storage alerts: history entries still within cooldown window
+    from datetime import timedelta, timezone
+    from app.database import AlertRule
+    alert_result = await db.execute(
+        select(AlertHistory)
+        .options(selectinload(AlertHistory.rule))
+        .join(AlertRule, AlertHistory.rule_id == AlertRule.id)
+        .where(AlertRule.rule_type == "storage")
+        .where(AlertRule.is_enabled == True)
+        .order_by(AlertHistory.triggered_at.desc())
+        .limit(20)
+    )
+    now = datetime.now(timezone.utc)
+    seen: set[int] = set()
     alerts = []
+    for h in alert_result.scalars().all():
+        if h.rule is None or h.rule_id in seen:
+            continue
+        seen.add(h.rule_id)
+        cooldown_end = h.triggered_at + timedelta(minutes=h.rule.cooldown_minutes)
+        if now <= cooldown_end:
+            alerts.append({"rule_name": h.rule.name, "message": h.message})
 
     return templates.TemplateResponse(
         "partials/storage_overview.html",
