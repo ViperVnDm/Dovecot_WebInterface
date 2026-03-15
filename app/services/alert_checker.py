@@ -19,20 +19,30 @@ settings = get_settings()
 
 DEFAULT_CHECK_INTERVAL = 5  # minutes
 
+# Keys stored in app_settings table
+SETTING_CHECK_INTERVAL = "alert_check_interval"
+SETTING_SMTP_FROM = "smtp_from"
+SETTING_SMTP_HOST = "smtp_host"
+SETTING_SMTP_PORT = "smtp_port"
+
+
+async def get_all_settings() -> dict:
+    """Load all alert-related settings from DB, merging with config defaults."""
+    async with async_session() as db:
+        result = await db.execute(select(AppSetting))
+        rows = {r.key: r.value for r in result.scalars().all()}
+
+    return {
+        "check_interval": max(1, int(rows.get(SETTING_CHECK_INTERVAL, DEFAULT_CHECK_INTERVAL))),
+        "smtp_from": rows.get(SETTING_SMTP_FROM, settings.smtp_from),
+        "smtp_host": rows.get(SETTING_SMTP_HOST, settings.smtp_host),
+        "smtp_port": int(rows.get(SETTING_SMTP_PORT, settings.smtp_port)),
+    }
+
 
 async def get_check_interval() -> int:
-    """Read check interval from DB settings, falling back to default."""
-    async with async_session() as db:
-        result = await db.execute(
-            select(AppSetting).where(AppSetting.key == "alert_check_interval")
-        )
-        setting = result.scalar_one_or_none()
-        if setting:
-            try:
-                return max(1, int(setting.value))
-            except ValueError:
-                pass
-    return DEFAULT_CHECK_INTERVAL
+    s = await get_all_settings()
+    return s["check_interval"]
 
 
 async def _get_metric(rule_type: str) -> float | None:
@@ -68,10 +78,12 @@ def _evaluate(current: float, operator: str, threshold: float) -> bool:
     }.get(operator, False)
 
 
-def _send_email(rule: AlertRule, current_value: float, message: str) -> bool:
+async def _send_email(rule: AlertRule, current_value: float, message: str) -> bool:
     """Send an email notification via local SMTP. Returns True on success."""
-    if not settings.smtp_from:
-        logger.error("SMTP_FROM is not configured — set it in .env (e.g. alerts@yourdomain.com)")
+    cfg = await get_all_settings()
+    smtp_from = cfg["smtp_from"]
+    if not smtp_from:
+        logger.error("smtp_from is not configured — set it in the Alerts settings page")
         return False
     try:
         body = (
@@ -83,11 +95,11 @@ def _send_email(rule: AlertRule, current_value: float, message: str) -> bool:
         )
         msg = MIMEText(body)
         msg["Subject"] = f"[Mail Admin] Alert: {rule.name}"
-        msg["From"] = settings.smtp_from
+        msg["From"] = smtp_from
         msg["To"] = rule.notification_target
 
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
-            smtp.sendmail(settings.smtp_from, [rule.notification_target], msg.as_string())
+        with smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=10) as smtp:
+            smtp.sendmail(smtp_from, [rule.notification_target], msg.as_string())
 
         logger.info(f"Alert notification sent to {rule.notification_target} for rule '{rule.name}'")
         return True
@@ -127,9 +139,9 @@ def _send_webhook(rule: AlertRule, current_value: float, message: str) -> bool:
         return False
 
 
-def _notify(rule: AlertRule, current_value: float, message: str) -> bool:
+async def _notify(rule: AlertRule, current_value: float, message: str) -> bool:
     if rule.notification_type == "email":
-        return _send_email(rule, current_value, message)
+        return await _send_email(rule, current_value, message)
     if rule.notification_type == "webhook":
         return _send_webhook(rule, current_value, message)
     return False
@@ -170,7 +182,7 @@ async def check_alerts() -> None:
                     f"({op} {rule.threshold_value} threshold exceeded)"
                 )
 
-                notification_sent = _notify(rule, current_value, message)
+                notification_sent = await _notify(rule, current_value, message)
 
                 db.add(AlertHistory(
                     rule_id=rule.id,
