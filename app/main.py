@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.database import init_db
 
 # Import routers
-from app.api import auth, users, queue, logs, storage, partials
+from app.api import auth, users, queue, logs, storage, partials, alerts
 from app.core.security import get_current_user
 from app.database import get_db, AdminUser
 
@@ -60,6 +60,7 @@ app.include_router(queue.router, prefix="/api/queue", tags=["queue"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(storage.router, prefix="/api/storage", tags=["storage"])
 app.include_router(partials.router, prefix="/partials", tags=["partials"])
+app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 
 
 @app.get("/")

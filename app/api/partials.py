@@ -5,9 +5,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
-from app.database import AdminUser
+from app.database import get_db, AdminUser, AlertRule, AlertHistory
 
 logger = logging.getLogger(__name__)
 
@@ -374,11 +377,10 @@ async def storage_history(
 async def alerts_active(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Active alerts list."""
-    # TODO: Implement
     alerts = []
-
     return templates.TemplateResponse(
         "partials/alerts_active.html",
         {"request": request, "alerts": alerts},
@@ -389,11 +391,11 @@ async def alerts_active(
 async def alerts_rules(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Alert rules list."""
-    # TODO: Implement from database
-    rules = []
-
+    result = await db.execute(select(AlertRule).order_by(AlertRule.created_at.desc()))
+    rules = result.scalars().all()
     return templates.TemplateResponse(
         "partials/alerts_rules.html",
         {"request": request, "rules": rules},
@@ -404,11 +406,13 @@ async def alerts_rules(
 async def alerts_history(
     request: Request,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Alert history list."""
-    # TODO: Implement from database
-    history = []
-
+    result = await db.execute(
+        select(AlertHistory).order_by(AlertHistory.triggered_at.desc()).limit(50)
+    )
+    history = result.scalars().all()
     return templates.TemplateResponse(
         "partials/alerts_history.html",
         {"request": request, "history": history},
