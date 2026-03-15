@@ -127,13 +127,12 @@ def cmd_create_user(params: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         raise CommandError(f"Mail group '{MAIL_GROUP}' not found", 500)
 
-    # Create user with mail group, no login shell
+    # Create user with standard home dir, own private group, mail as supplementary group
     stdout, stderr, rc = run_command([
         "useradd",
-        "-m",  # Create home directory
-        "-s", "/sbin/nologin",  # No login shell
-        "-g", str(mail_gid),  # Primary group
-        "-d", str(MAIL_SPOOL_PATH / username),  # Home = mail directory
+        "-m",                      # Create home directory under /home/<username>
+        "-s", "/usr/sbin/nologin", # No login shell
+        "-G", MAIL_GROUP,          # Add to mail group as supplementary member
         username,
     ])
 
