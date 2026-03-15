@@ -161,6 +161,10 @@ class PrivilegedHelperClient:
         response = await self._send_command("read_logs", params)
         return response.get("entries", [])
 
+    async def get_log_stats(self) -> dict[str, int]:
+        """Get today's sent/received/bounced/error counts from mail.log."""
+        return await self._send_command("get_log_stats", {})
+
     async def get_mailbox_sizes(self) -> list[dict[str, Any]]:
         """Get mailbox sizes for all users."""
         response = await self._send_command("mailbox_sizes", {})

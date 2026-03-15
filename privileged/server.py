@@ -506,6 +506,48 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
     return {"entries": entries}
 
 
+def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
+    """Count today's sent, received, bounced, and error events from mail.log."""
+    from datetime import date
+
+    today = date.today().isoformat()  # e.g. "2026-03-14"
+
+    sent = received = bounced = errors = 0
+
+    if not MAIL_LOG_PATH.exists():
+        return {"sent_today": 0, "received_today": 0, "bounced_today": 0, "errors_today": 0}
+
+    with open(MAIL_LOG_PATH, errors="replace") as f:
+        for line in f:
+            if not line.startswith(today):
+                continue
+            # Outbound delivery via SMTP to external relay
+            if "postfix/smtp" in line and "status=sent" in line:
+                sent += 1
+            # Inbound delivery to local mailbox
+            elif ("postfix/local" in line or "postfix/lmtp" in line) and "status=sent" in line:
+                received += 1
+            # Bounced (any direction)
+            if "status=bounced" in line:
+                bounced += 1
+            # Errors: auth failures, deferred delivery, explicit error/fatal
+            if (
+                "authentication failed" in line.lower()
+                or "auth failed" in line.lower()
+                or "status=deferred" in line
+                or ": fatal:" in line.lower()
+                or ": error:" in line.lower()
+            ):
+                errors += 1
+
+    return {
+        "sent_today": sent,
+        "received_today": received,
+        "bounced_today": bounced,
+        "errors_today": errors,
+    }
+
+
 def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
     """Get mailbox sizes for all users."""
     mailboxes = []
@@ -557,6 +599,7 @@ COMMANDS = {
     "release_message": cmd_release_message,
     # Logs
     "read_logs": cmd_read_logs,
+    "get_log_stats": cmd_get_log_stats,
     "mailbox_sizes": cmd_mailbox_sizes,
 }
 

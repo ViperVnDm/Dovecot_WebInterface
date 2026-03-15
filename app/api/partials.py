@@ -257,13 +257,11 @@ async def logs_stats(
     current_user: AdminUser = Depends(get_current_user),
 ):
     """Log statistics cards."""
-    # TODO: Implement actual stats
-    stats = {
-        "sent_today": 0,
-        "received_today": 0,
-        "bounced_today": 0,
-        "errors_today": 0,
-    }
+    helper = get_helper_client()
+    try:
+        stats = await helper.get_log_stats()
+    except PrivilegedHelperError:
+        stats = {"sent_today": 0, "received_today": 0, "bounced_today": 0, "errors_today": 0}
 
     return templates.TemplateResponse(
         "partials/logs_stats.html",
