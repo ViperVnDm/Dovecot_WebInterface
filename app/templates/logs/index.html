@@ -93,7 +93,8 @@
             <span class="text-xs text-gray-500">Most recent 100 entries</span>
         </div>
         <div id="log-output"
-             class="p-4 font-mono text-sm h-[60vh] overflow-y-auto"
+             class="p-4 font-mono text-sm overflow-y-auto"
+             style="height: calc(100vh - 600px); min-height: 200px;"
              hx-get="/partials/logs/entries"
              hx-trigger="load, every 10s"
              hx-include="[name='level'],[name='service'],[name='search']"
