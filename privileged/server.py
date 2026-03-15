@@ -493,12 +493,27 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
             if search and search.lower() not in line.lower():
                 continue
 
-            # Determine level
+            # Determine level — check for an explicit Python log level prefix
+            # first (e.g. uvicorn "INFO: …") so that URLs like
+            # "?level=error" in a request log don't cause false positives.
             entry_level = "info"
-            if "error" in message.lower() or "fatal" in message.lower():
-                entry_level = "error"
-            elif "warning" in message.lower() or "warn" in message.lower():
-                entry_level = "warning"
+            level_prefix = re.match(
+                r"^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b",
+                message, re.IGNORECASE,
+            )
+            if level_prefix:
+                prefix = level_prefix.group(1).upper()
+                if prefix in ("ERROR", "CRITICAL", "FATAL"):
+                    entry_level = "error"
+                elif prefix in ("WARNING", "WARN"):
+                    entry_level = "warning"
+            else:
+                # Syslog-style messages: keyword scan of full message
+                msg_lower = message.lower()
+                if "error" in msg_lower or "fatal" in msg_lower:
+                    entry_level = "error"
+                elif "warning" in msg_lower or "warn" in msg_lower:
+                    entry_level = "warning"
 
             # Filter by level
             if level and entry_level != level:
