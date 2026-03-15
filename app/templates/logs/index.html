@@ -96,6 +96,7 @@
              class="p-4 font-mono text-sm h-[60vh] overflow-y-auto"
              hx-get="/partials/logs/entries"
              hx-trigger="load, every 10s"
+             hx-include="[name='level'],[name='service'],[name='search']"
              hx-swap="innerHTML">
             <div class="text-gray-400 text-center py-8">
                 <div class="animate-spin inline-block w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>

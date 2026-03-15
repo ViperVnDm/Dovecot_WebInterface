@@ -483,7 +483,10 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
             timestamp, host, svc, pid, message = match.groups()
 
             # Filter by service
-            if service and not svc.lower().startswith(service.lower()):
+            # For webadmin, journalctl already scoped the output to that unit;
+            # skip the name check because the process name (e.g. uvicorn) won't
+            # match "webadmin".
+            if service and service != "webadmin" and not svc.lower().startswith(service.lower()):
                 continue
 
             # Filter by search term
