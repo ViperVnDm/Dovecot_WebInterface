@@ -28,7 +28,7 @@ class PrivilegedHelperClient:
     async def _send_command(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a command to the privileged helper and return the response."""
         try:
-            reader, writer = await asyncio.open_unix_connection(str(self.socket_path))
+            reader, writer = await asyncio.open_unix_connection(str(self.socket_path), limit=4 * 1024 * 1024)  # 4 MB
         except (FileNotFoundError, ConnectionRefusedError) as e:
             raise PrivilegedHelperError(
                 f"Cannot connect to privileged helper: {e}",
