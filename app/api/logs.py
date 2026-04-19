@@ -4,6 +4,7 @@ import ipaddress
 from datetime import datetime
 from enum import Enum
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
@@ -112,6 +113,24 @@ async def _save_allowlist(db: AsyncSession, entries: list[str]) -> None:
     await db.commit()
 
 
+def _ips_covered_by_cidr(cidr: str, ip_list: list[str]) -> list[str]:
+    """Return IPs from ip_list that fall within the given CIDR range."""
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return []
+    covered = []
+    for entry in ip_list:
+        if "/" in entry:
+            continue  # skip other CIDRs
+        try:
+            if ipaddress.ip_address(entry) in network:
+                covered.append(entry)
+        except ValueError:
+            continue
+    return covered
+
+
 # ── Allowlist API ────────────────────────────────────────────────────────────
 
 
@@ -136,11 +155,15 @@ async def add_to_allowlist(
     allowlist = await load_allowlist(db)
     if entry not in allowlist:
         allowlist.append(entry)
+        # If adding a CIDR, remove individual IPs it covers
+        if "/" in entry:
+            covered = _ips_covered_by_cidr(entry, allowlist)
+            allowlist = [e for e in allowlist if e not in covered]
         await _save_allowlist(db, allowlist)
 
     return templates.TemplateResponse(
-        "partials/logs_allowlist.html",
-        {"request": request, "allowlist": allowlist},
+        request, "partials/logs_allowlist.html",
+        context={"allowlist": allowlist},
     )
 
 
@@ -156,8 +179,8 @@ async def remove_from_allowlist(
     allowlist = [e for e in allowlist if e != entry]
     await _save_allowlist(db, allowlist)
     return templates.TemplateResponse(
-        "partials/logs_allowlist.html",
-        {"request": request, "allowlist": allowlist},
+        request, "partials/logs_allowlist.html",
+        context={"allowlist": allowlist},
     )
 
 
@@ -166,32 +189,76 @@ async def remove_from_allowlist(
 
 @router.post("/ban-ip")
 async def ban_ip(
+    request: Request,
     ip: str = Form(...),
     current_user: AdminUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Block an IP address via UFW (rejected if allowlisted)."""
-    allowlist = await load_allowlist(db)
-    if is_allowlisted(ip, allowlist):
-        raise HTTPException(status_code=403, detail=f"{ip} is in the never-ban allowlist")
+):
+    """Block an IP address or CIDR range via UFW (rejected if allowlisted)."""
+    target = ip.strip()
+    # For single IPs, check allowlist; for CIDRs, validate format
+    if "/" in target:
+        try:
+            ipaddress.ip_network(target, strict=False)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid CIDR: {target}")
+    else:
+        allowlist = await load_allowlist(db)
+        if is_allowlisted(target, allowlist):
+            raise HTTPException(status_code=403, detail=f"{target} is in the never-ban allowlist")
+
     helper = get_helper_client()
     try:
-        return await helper.ban_ip(ip)
+        await helper.ban_ip(target)
     except PrivilegedHelperError as e:
         raise HTTPException(status_code=e.code, detail=e.message)
 
+    # If banning a CIDR, remove individual IPs it covers from UFW
+    if "/" in target:
+        try:
+            banned = await helper.list_banned_ips()
+            covered = _ips_covered_by_cidr(target, banned)
+            for covered_ip in covered:
+                try:
+                    await helper.unban_ip(covered_ip)
+                except PrivilegedHelperError:
+                    pass  # best-effort cleanup
+        except PrivilegedHelperError:
+            pass
 
-@router.delete("/ban-ip/{ip}")
+    # Return updated banned IPs list for HTMX
+    try:
+        banned_ips = await helper.list_banned_ips()
+    except PrivilegedHelperError:
+        banned_ips = []
+    return templates.TemplateResponse(
+        request, "partials/logs_banned.html",
+        context={"banned_ips": banned_ips},
+    )
+
+
+@router.delete("/ban-ip/{ip:path}")
 async def unban_ip(
+    request: Request,
     ip: str,
     current_user: AdminUser = Depends(get_current_user),
-) -> dict:
-    """Remove a UFW ban for an IP address."""
+):
+    """Remove a UFW ban for an IP address or CIDR range."""
     helper = get_helper_client()
     try:
-        return await helper.unban_ip(ip)
+        await helper.unban_ip(ip)
     except PrivilegedHelperError as e:
         raise HTTPException(status_code=e.code, detail=e.message)
+
+    # Return updated banned IPs list for HTMX
+    try:
+        banned_ips = await helper.list_banned_ips()
+    except PrivilegedHelperError:
+        banned_ips = []
+    return templates.TemplateResponse(
+        request, "partials/logs_banned.html",
+        context={"banned_ips": banned_ips},
+    )
 
 
 @router.get("/banned-ips")
@@ -205,6 +272,40 @@ async def list_banned_ips(
         return {"banned_ips": ips}
     except PrivilegedHelperError as e:
         raise HTTPException(status_code=e.code, detail=e.message)
+
+
+@router.get("/export")
+async def export_ip_lists(
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export banned and never-banned IPs as a downloadable text file."""
+    helper = get_helper_client()
+    try:
+        banned = await helper.list_banned_ips()
+    except PrivilegedHelperError:
+        banned = []
+    allowlist = await load_allowlist(db)
+
+    lines = ["# IP Ban/Allowlist Export", "#"]
+    lines.append("# Banned IPs/CIDRs (UFW DENY rules)")
+    if banned:
+        for entry in banned:
+            lines.append(entry)
+    else:
+        lines.append("# (none)")
+    lines.append("#")
+    lines.append("# Never-Ban Allowlist")
+    if allowlist:
+        for entry in allowlist:
+            lines.append(entry)
+    else:
+        lines.append("# (none)")
+
+    return PlainTextResponse(
+        "\n".join(lines) + "\n",
+        headers={"Content-Disposition": "attachment; filename=ip-lists-export.txt"},
+    )
 
 
 @router.get("")

@@ -282,8 +282,8 @@ async def logs_stats(
         stats = {"sent_today": 0, "received_today": 0, "bounced_today": 0, "errors_today": 0}
 
     return templates.TemplateResponse(
-        "partials/logs_stats.html",
-        {"request": request, "stats": stats},
+        request, "partials/logs_stats.html",
+        context={"stats": stats},
     )
 
 
@@ -300,8 +300,8 @@ async def logs_banned(
         banned_ips = []
 
     return templates.TemplateResponse(
-        "partials/logs_banned.html",
-        {"request": request, "banned_ips": banned_ips},
+        request, "partials/logs_banned.html",
+        context={"banned_ips": banned_ips},
     )
 
 
@@ -315,8 +315,8 @@ async def logs_allowlist(
     from app.api.logs import load_allowlist
     allowlist = await load_allowlist(db)
     return templates.TemplateResponse(
-        "partials/logs_allowlist.html",
-        {"request": request, "allowlist": allowlist},
+        request, "partials/logs_allowlist.html",
+        context={"allowlist": allowlist},
     )
 
 
@@ -351,8 +351,8 @@ async def logs_entries(
         entry["ips"] = [ip for ip in entry.get("ips", []) if not is_allowlisted(ip, allowlist)]
 
     return templates.TemplateResponse(
-        "partials/logs_entries.html",
-        {"request": request, "entries": entries},
+        request, "partials/logs_entries.html",
+        context={"entries": entries},
     )
 
 

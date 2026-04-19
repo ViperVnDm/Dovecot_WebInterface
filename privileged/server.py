@@ -38,6 +38,7 @@ MAIL_SPOOL_PATH = Path(os.environ.get("MAIL_SPOOL_PATH", "/var/mail"))
 USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 QUEUE_ID_PATTERN = re.compile(r"^[A-F0-9]{10,12}$")
 IP_ADDR_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+CIDR_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2})\b")
 
 # Reserved usernames that cannot be created/deleted
 RESERVED_USERNAMES = frozenset([
@@ -662,36 +663,61 @@ def _validate_ip(ip: str) -> str:
     return ip.strip()
 
 
+def _validate_ip_or_cidr(value: str) -> str:
+    """Validate an IPv4 address or CIDR range. Returns the cleaned value."""
+    value = value.strip()
+    if "/" in value:
+        if not CIDR_RE.fullmatch(value):
+            raise CommandError("Invalid CIDR format", 400)
+        ip_part, prefix = value.rsplit("/", 1)
+        parts = ip_part.split(".")
+        if not all(0 <= int(p) <= 255 for p in parts):
+            raise CommandError("Invalid CIDR: octet out of range", 400)
+        if not (0 <= int(prefix) <= 32):
+            raise CommandError("Invalid CIDR: prefix must be 0-32", 400)
+        if value.startswith("127.") or value.startswith("0."):
+            raise CommandError("Cannot ban loopback or wildcard range", 400)
+        return value
+    return _validate_ip(value)
+
+
 def cmd_ban_ip(params: dict[str, Any]) -> dict[str, Any]:
-    """Block an IP address using UFW."""
-    ip = _validate_ip(params.get("ip", ""))
-    stdout, stderr, rc = run_command(["ufw", "insert", "1", "deny", "from", ip])
+    """Block an IP address or CIDR range using UFW."""
+    target = _validate_ip_or_cidr(params.get("ip", ""))
+    stdout, stderr, rc = run_command(["ufw", "insert", "1", "deny", "from", target])
     if rc != 0:
-        raise CommandError(f"Failed to ban IP: {stderr.strip()}", 500)
-    logger.info(f"Banned IP: {ip}")
-    return {"success": True, "ip": ip}
+        raise CommandError(f"Failed to ban {target}: {stderr.strip()}", 500)
+    logger.info(f"Banned: {target}")
+    return {"success": True, "ip": target}
 
 
 def cmd_unban_ip(params: dict[str, Any]) -> dict[str, Any]:
-    """Remove a UFW ban for an IP address."""
-    ip = _validate_ip(params.get("ip", ""))
-    stdout, stderr, rc = run_command(["ufw", "delete", "deny", "from", ip])
+    """Remove a UFW ban for an IP address or CIDR range."""
+    target = _validate_ip_or_cidr(params.get("ip", ""))
+    stdout, stderr, rc = run_command(["ufw", "delete", "deny", "from", target])
     if rc != 0:
-        raise CommandError(f"Failed to unban IP: {stderr.strip()}", 500)
-    logger.info(f"Unbanned IP: {ip}")
-    return {"success": True, "ip": ip}
+        raise CommandError(f"Failed to unban {target}: {stderr.strip()}", 500)
+    logger.info(f"Unbanned: {target}")
+    return {"success": True, "ip": target}
 
 
 def cmd_list_banned_ips(params: dict[str, Any]) -> dict[str, Any]:
-    """List IPs currently blocked by UFW DENY rules."""
+    """List IPs and CIDRs currently blocked by UFW DENY rules."""
     stdout, stderr, rc = run_command(["ufw", "status"])
     if rc != 0:
         raise CommandError(f"Failed to get UFW status: {stderr.strip()}", 500)
 
     banned = []
     for line in stdout.splitlines():
-        # Match lines like: "Anywhere   DENY IN   1.2.3.4"
+        # Match lines like: "Anywhere   DENY IN   1.2.3.4" or "... 10.0.0.0/8"
         if "DENY" not in line:
+            continue
+        # Try CIDR first (more specific), then plain IP
+        m = CIDR_RE.search(line)
+        if m:
+            entry = m.group(1)
+            if entry not in banned:
+                banned.append(entry)
             continue
         m = IP_ADDR_RE.search(line)
         if m:

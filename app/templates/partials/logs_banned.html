@@ -1,22 +1,43 @@
 <!-- Banned IPs list -->
-{% if banned_ips %}
-<div class="flex flex-wrap gap-2">
-    {% for ip in banned_ips %}
-    <div class="flex items-center gap-1 bg-red-50 border border-red-200 rounded px-3 py-1">
-        <span class="font-mono text-sm text-red-800">{{ ip }}</span>
-        <button hx-delete="/api/logs/ban-ip/{{ ip }}"
-                hx-target="#banned-ips-list"
-                hx-swap="innerHTML"
-                hx-confirm="Unban {{ ip }}?"
-                title="Unban {{ ip }}"
-                class="ml-1 text-red-400 hover:text-red-700">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
+<div class="space-y-3">
+    <!-- Add CIDR form -->
+    <form hx-post="/api/logs/ban-ip"
+          hx-target="#banned-ips-list"
+          hx-swap="innerHTML"
+          hx-on::after-request="this.reset(); htmx.trigger('#banned-ips-list', 'refreshBanned')"
+          class="flex gap-2">
+        <input type="text"
+               name="ip"
+               required
+               placeholder="IP or CIDR (e.g. 10.0.0.0/8)"
+               class="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg
+                      focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono">
+        <button type="submit"
+                class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg">
+            Ban
         </button>
+    </form>
+
+    <!-- Current entries -->
+    {% if banned_ips %}
+    <div class="flex flex-wrap gap-2">
+        {% for entry in banned_ips %}
+        <div class="flex items-center gap-1 bg-red-50 border border-red-200 rounded px-3 py-1">
+            <span class="font-mono text-sm text-red-800">{{ entry }}</span>
+            <button hx-delete="/api/logs/ban-ip/{{ entry }}"
+                    hx-target="#banned-ips-list"
+                    hx-swap="innerHTML"
+                    hx-confirm="Unban {{ entry }}?"
+                    title="Unban {{ entry }}"
+                    class="ml-1 text-red-400 hover:text-red-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
+    {% else %}
+    <p class="text-sm text-gray-500">No IPs are currently banned.</p>
+    {% endif %}
 </div>
-{% else %}
-<p class="text-sm text-gray-500">No IPs are currently banned.</p>
-{% endif %}
