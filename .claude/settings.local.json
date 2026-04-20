@@ -5,7 +5,17 @@
       "Bash(chmod:*)",
       "Bash(python3 -m py_compile:*)",
       "Bash(python -m pytest tests/ -v)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(find /Users/nick/repos/Dovecot_WebInterface -name *.service -o -name systemd* -type f)",
+      "Bash(grep -r \"password.*reset\\\\|reset.*password\\\\|forgot.*password\" /Users/nick/repos/Dovecot_WebInterface --include=*.py)",
+      "Bash(grep -r \"csrf\\\\|rate_limit\\\\|limiter\" /Users/nick/repos/Dovecot_WebInterface --include=*.py)",
+      "Bash(grep:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(python3.13:*)",
+      "Bash(pip3 list:*)",
+      "Bash(pip3.13 list:*)",
+      "Bash(ls requirements*.txt)"
     ]
   }
 }

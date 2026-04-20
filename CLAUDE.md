@@ -38,7 +38,13 @@ SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrati
 `storage_collector_loop()` takes a disk usage snapshot on startup then every hour. `StorageHistory` records are queried last 30 days (one point per calendar day) for the history chart.
 
 ### IP Banning
-UFW-based (`ufw insert 1 deny from <ip>`). Validation: IPv4 only, rejects loopback and wildcard. Never-ban allowlist stored as comma-separated string in `app_settings` with key `ban_allowlist`. The `/partials/logs/entries` route strips IPs that are on the allowlist from the ban button rendering.
+UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 addresses and CIDR ranges (e.g., `10.0.0.0/8`). Validation in the helper: `_validate_ip_or_cidr()` checks format, octet ranges, prefix length (0-32), and rejects loopback/wildcard. `cmd_list_banned_ips()` parses both CIDR and plain IP entries from `ufw status` output.
+
+**CIDR consolidation:** When banning a CIDR range, individual IPs that fall within that range are automatically unbanned from UFW. The same consolidation applies to the never-ban allowlist — adding a CIDR removes covered individual IPs from the list.
+
+**Never-ban allowlist:** stored as comma-separated string in `app_settings` with key `ban_allowlist`. The `/partials/logs/entries` route strips IPs that are on the allowlist from the ban button rendering. `is_allowlisted()` in `app/api/logs.py` handles both exact IP and CIDR matching via Python's `ipaddress` module.
+
+**Export:** `GET /api/logs/export` returns a plain text file (attachment) containing both the banned IPs/CIDRs and the never-ban allowlist entries for disaster recovery backup.
 
 ### Log Reading
 `privileged/server.py` reads logs via:
@@ -110,5 +116,5 @@ Runtime settings (SMTP config, alert interval, IP allowlist) are stored in the `
 
 - `bcrypt` must be pinned to `<4.0.0` (passlib compatibility)
 - `app/api/queue.py` uses `regex=` on a `Query()` parameter — this is deprecated in newer FastAPI but still works; will show a `FastAPIDeprecationWarning` in tests
-- Starlette `TemplateResponse` argument order is deprecated — templates use the old `(name, {"request": ...})` form; will show a `DeprecationWarning` in tests
+- Starlette `TemplateResponse` argument order — `app/api/logs.py` and log-related partials in `app/api/partials.py` use the new Starlette 1.0 form `(request, name, context={})`. Other modules (`alerts.py`, `auth.py`, remaining partials) still use the old `(name, {"request": ...})` form which crashes with Starlette 1.0 + Jinja2 3.1 due to unhashable dict in cache key. These should be migrated to the new form.
 - `asyncio.open_unix_connection` does not exist on Windows; the helper IPC client will fail on Windows (expected — the helper is Linux-only)
