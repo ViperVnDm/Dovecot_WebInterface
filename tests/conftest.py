@@ -7,15 +7,19 @@ from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, patch
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
+# Set required env BEFORE importing app modules
+os.environ.setdefault("SECRET_KEY", "test-secret-key-with-enough-entropy-xx")
+os.environ.setdefault("COOKIE_SECURE", "false")
+# Effectively disable login rate limiting in tests (all requests come from
+# 127.0.0.1 so the default 5/minute would otherwise quickly exhaust).
+os.environ.setdefault("LOGIN_RATE_LIMIT", "10000/minute")
+
 from app.database import Base, AdminUser, get_db
 from app.core.security import hash_password
 from app.config import get_settings
 
-# Clear cached settings so COOKIE_SECURE=false takes effect
+# Clear cached settings so test env vars take effect
 get_settings.cache_clear()
-
-# Disable secure-only cookies so the test HTTP client (plain HTTP) can send them.
-os.environ["COOKIE_SECURE"] = "false"
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 TEST_USERNAME = "testadmin"
@@ -67,6 +71,21 @@ async def db_session(db_engine):
         yield session
 
 
+async def _prime_csrf(ac: AsyncClient) -> str:
+    """Issue a GET to populate the CSRF cookie and return the token.
+
+    Also installs the matching X-CSRF-Token header on the client so all
+    subsequent unsafe requests pass middleware validation by default.
+    """
+    resp = await ac.get("/login", follow_redirects=False)
+    token = resp.cookies.get("dwa_csrf")
+    assert token, f"CSRF cookie not set by /login (status={resp.status_code})"
+    # httpx doesn't always carry the cookie forward in ASGI mode; copy explicitly
+    ac.cookies.set("dwa_csrf", token)
+    ac.headers["X-CSRF-Token"] = token
+    return token
+
+
 @pytest_asyncio.fixture
 async def client(db_engine):
     """Unauthenticated test client with in-memory DB and mocked helper."""
@@ -101,15 +120,23 @@ async def client(db_engine):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
+            await _prime_csrf(ac)
             yield ac, mock_helper
 
     app.dependency_overrides.clear()
+
+
+def _csrf_headers(ac: AsyncClient) -> dict:
+    """Build headers dict including the X-CSRF-Token from the client cookie jar."""
+    token = ac.cookies.get("dwa_csrf", "")
+    return {"X-CSRF-Token": token} if token else {}
 
 
 @pytest_asyncio.fixture
 async def auth_client(client):
     """Authenticated test client (session cookie already set)."""
     ac, mock_helper = client
+    # /login is CSRF-exempt by design
     resp = await ac.post(
         "/login",
         data={"username": TEST_USERNAME, "password": TEST_PASSWORD},

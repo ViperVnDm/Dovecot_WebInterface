@@ -15,7 +15,39 @@ RestartSec=5
 
 # Runtime directory for socket
 RuntimeDirectory=dovecot-webadmin
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
+
+# Security hardening — the helper still needs root for useradd/userdel,
+# chpasswd, ufw, doveadm, and reading mail logs. Lock down everything else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Filesystem — read-only system, with explicit writable paths
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin
+
+# Network — Unix socket only, no network sockets needed
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+# System call filter — block exotic syscalls that the helper should never use
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete @raw-io
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

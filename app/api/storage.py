@@ -49,18 +49,20 @@ class StorageAlert(BaseModel):
 
 @router.get("/disk")
 async def get_disk_usage(
-    path: str | None = None,
     current_user: AdminUser = Depends(get_current_user),
 ) -> DiskUsage:
-    """Get disk usage for mail storage."""
-    # TODO: Implement - this can run without privileged helper
-    # since we just need to read disk stats
+    """Get disk usage for the configured mail spool path.
+
+    The path is fixed to `settings.mail_spool_path` — accepting an arbitrary
+    path from the client allowed authenticated users to probe any filesystem
+    location and was removed.
+    """
     import shutil
 
     from app.config import get_settings
 
     settings = get_settings()
-    target_path = path or str(settings.mail_spool_path)
+    target_path = str(settings.mail_spool_path)
 
     try:
         usage = shutil.disk_usage(target_path)

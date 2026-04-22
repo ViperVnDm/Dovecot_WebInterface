@@ -1,15 +1,13 @@
 """User management API routes."""
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import AdminUser
+from app.templates_setup import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
 def _format_bytes(size: int) -> str:
@@ -27,8 +25,9 @@ async def _render_users_list(request: Request):
     except PrivilegedHelperError:
         users = []
     return templates.TemplateResponse(
+        request,
         "partials/users_list.html",
-        {"request": request, "users": users, "format_bytes": _format_bytes},
+        {"users": users, "format_bytes": _format_bytes},
     )
 
 
@@ -46,8 +45,9 @@ async def create_user(
         await helper.create_user(username, password, quota_mb)
     except PrivilegedHelperError as e:
         return templates.TemplateResponse(
+            request,
             "partials/error.html",
-            {"request": request, "error": e.message},
+            {"error": e.message},
             status_code=400,
         )
     return await _render_users_list(request)
@@ -66,8 +66,9 @@ async def set_password(
         await helper.set_password(username, password)
     except PrivilegedHelperError as e:
         return templates.TemplateResponse(
+            request,
             "partials/error.html",
-            {"request": request, "error": e.message},
+            {"error": e.message},
             status_code=400,
         )
     return await _render_users_list(request)
@@ -85,8 +86,9 @@ async def delete_user(
         await helper.delete_user(username, delete_mail=False)
     except PrivilegedHelperError as e:
         return templates.TemplateResponse(
+            request,
             "partials/error.html",
-            {"request": request, "error": e.message},
+            {"error": e.message},
             status_code=400,
         )
     return await _render_users_list(request)

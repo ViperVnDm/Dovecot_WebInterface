@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{{ title or 'Mail Admin' }}{% endblock %} - Mail Server Admin</title>
 
+    <!-- CSRF token (read by the htmx:configRequest handler below) -->
+    <meta name="csrf-token" content="{{ csrf_token(request) }}">
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -68,6 +71,7 @@
                 {% if current_user %}
                 <span class="hidden sm:inline text-blue-200">{{ current_user.username }}</span>
                 <form action="/logout" method="post" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
                     <button type="submit"
                             class="bg-blue-700 px-3 py-1 rounded hover:bg-blue-600 transition-colors">
                         Logout

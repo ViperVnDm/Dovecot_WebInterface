@@ -47,7 +47,7 @@ class MessageDetails(BaseModel):
 
 @router.get("")
 async def list_queue(
-    queue_name: str | None = Query(default=None, regex="^(active|deferred|hold|incoming)$"),
+    queue_name: str | None = Query(default=None, pattern="^(active|deferred|hold|incoming)$"),
     sender: str | None = None,
     recipient: str | None = None,
     current_user: AdminUser = Depends(get_current_user),

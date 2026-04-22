@@ -22,7 +22,7 @@ async def test_login_success_redirects_to_dashboard(client):
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "/dashboard"
-    assert "session" in resp.cookies
+    assert "dwa_session" in resp.cookies
 
 
 @pytest.mark.asyncio

@@ -5,18 +5,17 @@ from datetime import datetime
 from enum import Enum
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
+from app.config import get_settings
+from app.core.security import get_current_user, validate_session
 from app.core.permissions import get_helper_client, PrivilegedHelperError
-from app.database import get_db, AdminUser, AppSetting
+from app.database import get_db, AdminUser, AppSetting, async_session
+from app.templates_setup import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 SETTING_BAN_ALLOWLIST = "ban_allowlist"
 
@@ -320,12 +319,30 @@ async def get_logs(
     return []
 
 
+VALID_LOG_SERVICES = frozenset({"postfix", "dovecot", "spamd", "spamassassin", "webadmin"})
+
+
 @router.websocket("/ws")
 async def logs_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time log streaming."""
+    """WebSocket endpoint for real-time log streaming.
+
+    Requires a valid session cookie (mirrors HTTP route auth).
+    """
+    settings = get_settings()
+    token = websocket.cookies.get(settings.session_cookie_name)
+    if not token:
+        await websocket.close(code=4401)  # custom: unauthenticated
+        return
+
+    async with async_session() as db:
+        user = await validate_session(db, token)
+    if user is None:
+        await websocket.close(code=4401)
+        return
+
     await websocket.accept()
     try:
         while True:
-            data = await websocket.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass

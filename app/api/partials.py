@@ -3,8 +3,6 @@
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,11 +11,13 @@ from sqlalchemy.orm import selectinload
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import get_db, AdminUser, AlertRule, AlertHistory
+from app.templates_setup import templates
 
 logger = logging.getLogger(__name__)
 
+VALID_LOG_SERVICES = frozenset({"postfix", "dovecot", "spamd", "spamassassin", "webadmin"})
+
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
 def format_bytes(size: int) -> str:
@@ -66,9 +66,9 @@ async def dashboard_stats(
         storage_percent = 0
 
     return templates.TemplateResponse(
+        request,
         "partials/dashboard_stats.html",
         {
-            "request": request,
             "user_count": user_count,
             "queue_total": queue_total,
             "deferred": deferred,
@@ -93,9 +93,9 @@ async def dashboard_queue_summary(
         messages = []
 
     return templates.TemplateResponse(
+        request,
         "partials/queue_summary.html",
         {
-            "request": request,
             "stats": queue_stats,
             "recent_messages": messages[:5],
         },
@@ -129,8 +129,9 @@ async def dashboard_storage_summary(
         disk_info = None
 
     return templates.TemplateResponse(
+        request,
         "partials/storage_summary.html",
-        {"request": request, "disk": disk_info, "format_bytes": format_bytes},
+        {"disk": disk_info, "format_bytes": format_bytes},
     )
 
 
@@ -148,8 +149,9 @@ async def dashboard_recent_activity(
         logs = []
 
     return templates.TemplateResponse(
+        request,
         "partials/recent_activity.html",
-        {"request": request, "logs": logs},
+        {"logs": logs},
     )
 
 
@@ -180,8 +182,9 @@ async def dashboard_alerts(
         if h.rule is not None
     ]
     return templates.TemplateResponse(
+        request,
         "partials/dashboard_alerts.html",
-        {"request": request, "alerts": alerts},
+        {"alerts": alerts},
     )
 
 
@@ -203,13 +206,15 @@ async def users_list(
             users = [u for u in users if search.lower() in u["username"].lower()]
     except PrivilegedHelperError as e:
         return templates.TemplateResponse(
+            request,
             "partials/error.html",
-            {"request": request, "error": f"Failed to load users: {e.message}"},
+            {"error": f"Failed to load users: {e.message}"},
         )
 
     return templates.TemplateResponse(
+        request,
         "partials/users_list.html",
-        {"request": request, "users": users, "format_bytes": format_bytes},
+        {"users": users, "format_bytes": format_bytes},
     )
 
 
@@ -230,8 +235,9 @@ async def queue_stats(
         stats = {"active": 0, "deferred": 0, "hold": 0, "incoming": 0, "total": 0}
 
     return templates.TemplateResponse(
+        request,
         "partials/queue_stats.html",
-        {"request": request, "stats": stats},
+        {"stats": stats},
     )
 
 
@@ -256,13 +262,15 @@ async def queue_table(
             ]
     except PrivilegedHelperError as e:
         return templates.TemplateResponse(
+            request,
             "partials/error.html",
-            {"request": request, "error": f"Failed to load queue: {e.message}"},
+            {"error": f"Failed to load queue: {e.message}"},
         )
 
     return templates.TemplateResponse(
+        request,
         "partials/queue_table.html",
-        {"request": request, "messages": messages, "format_bytes": format_bytes},
+        {"messages": messages, "format_bytes": format_bytes},
     )
 
 
@@ -332,6 +340,12 @@ async def logs_entries(
     """Log entries list."""
     from app.api.logs import load_allowlist, is_allowlisted
     helper = get_helper_client()
+
+    # Whitelist the service filter — the helper does a substring match on
+    # the raw log file, so an unconstrained value lets users surface lines
+    # they shouldn't normally see (e.g. searching for "password").
+    if service and service not in VALID_LOG_SERVICES:
+        service = ""
 
     allowlist = await load_allowlist(db)
 
@@ -413,8 +427,9 @@ async def storage_overview(
             alerts.append({"rule_name": h.rule.name, "message": h.message})
 
     return templates.TemplateResponse(
+        request,
         "partials/storage_overview.html",
-        {"request": request, "disk": disk_info, "alerts": alerts},
+        {"disk": disk_info, "alerts": alerts},
     )
 
 
@@ -432,8 +447,9 @@ async def storage_mailboxes(
         mailboxes = []
 
     return templates.TemplateResponse(
+        request,
         "partials/storage_mailboxes.html",
-        {"request": request, "mailboxes": mailboxes[:20], "format_bytes": format_bytes},
+        {"mailboxes": mailboxes[:20], "format_bytes": format_bytes},
     )
 
 
@@ -464,8 +480,9 @@ async def storage_history(
     history = list(by_day.values())
 
     return templates.TemplateResponse(
+        request,
         "partials/storage_history.html",
-        {"request": request, "history": history},
+        {"history": history},
     )
 
 
@@ -481,8 +498,9 @@ async def alerts_active(
     """Active alerts list."""
     alerts = []
     return templates.TemplateResponse(
+        request,
         "partials/alerts_active.html",
-        {"request": request, "alerts": alerts},
+        {"alerts": alerts},
     )
 
 
@@ -496,8 +514,9 @@ async def alerts_rules(
     result = await db.execute(select(AlertRule).order_by(AlertRule.created_at.desc()))
     rules = result.scalars().all()
     return templates.TemplateResponse(
+        request,
         "partials/alerts_rules.html",
-        {"request": request, "rules": rules},
+        {"rules": rules},
     )
 
 
@@ -516,6 +535,7 @@ async def alerts_history(
     )
     history = result.scalars().all()
     return templates.TemplateResponse(
+        request,
         "partials/alerts_history.html",
-        {"request": request, "history": history},
+        {"history": history},
     )

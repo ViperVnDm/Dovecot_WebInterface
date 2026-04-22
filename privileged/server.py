@@ -34,6 +34,10 @@ MAIL_GROUP = os.environ.get("MAIL_GROUP", "mail")
 MAIL_LOG_PATH = Path(os.environ.get("MAIL_LOG_PATH", "/var/log/mail.log"))
 MAIL_SPOOL_PATH = Path(os.environ.get("MAIL_SPOOL_PATH", "/var/mail"))
 
+# Allowed peer username for SO_PEERCRED check (defaults to www-data; override
+# with HELPER_ALLOWED_PEER for testing or non-standard deployments).
+ALLOWED_PEER_USER = os.environ.get("HELPER_ALLOWED_PEER", "www-data")
+
 # Validation patterns
 USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 QUEUE_ID_PATTERN = re.compile(r"^[A-F0-9]{10,12}$")
@@ -110,11 +114,8 @@ def run_command(cmd: list[str], input_data: str | None = None) -> tuple[str, str
 def cmd_create_user(params: dict[str, Any]) -> dict[str, Any]:
     """Create a new mail user."""
     username = validate_username(params.get("username", ""))
-    password = params.get("password", "")
+    password = _validate_password(params.get("password", ""))
     quota_mb = int(params.get("quota_mb", 0))
-
-    if not password or len(password) < 8:
-        raise CommandError("Password must be at least 8 characters", 400)
 
     # Check if user exists
     try:
@@ -201,13 +202,27 @@ def cmd_delete_user(params: dict[str, Any]) -> dict[str, Any]:
     return {"success": True}
 
 
+def _validate_password(password: str) -> str:
+    """Validate password content. Rejects characters that could be used
+    to inject additional entries into chpasswd's stdin format (user:pass)."""
+    if not isinstance(password, str) or not password:
+        raise CommandError("Password is required", 400)
+    if len(password) < 8:
+        raise CommandError("Password must be at least 8 characters", 400)
+    if len(password) > 1024:
+        raise CommandError("Password is too long (max 1024 chars)", 400)
+    if any(ch in password for ch in ("\n", "\r", "\x00", ":")):
+        raise CommandError(
+            "Password contains forbidden characters (newline, carriage return, NUL, or colon)",
+            400,
+        )
+    return password
+
+
 def cmd_set_password(params: dict[str, Any]) -> dict[str, Any]:
     """Set a user's password."""
     username = validate_username(params.get("username", ""))
-    password = params.get("password", "")
-
-    if not password or len(password) < 8:
-        raise CommandError("Password must be at least 8 characters", 400)
+    password = _validate_password(params.get("password", ""))
 
     # Check if user exists
     try:
@@ -652,15 +667,32 @@ def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_ip(ip: str) -> str:
-    """Validate IPv4 address. Raises CommandError on failure."""
-    if not IP_ADDR_RE.fullmatch(ip.strip()):
-        raise CommandError("Invalid IPv4 address format", 400)
-    parts = ip.split(".")
-    if not all(0 <= int(p) <= 255 for p in parts):
-        raise CommandError("Invalid IPv4 address: octet out of range", 400)
-    if ip in ("127.0.0.1", "0.0.0.0"):
-        raise CommandError("Cannot ban loopback or wildcard address", 400)
-    return ip.strip()
+    """Validate IPv4 address. Raises CommandError on failure.
+
+    Rejects loopback, wildcard, link-local, and multicast addresses.
+    Does NOT reject private ranges (an admin may legitimately want to ban
+    a hostile internal host) but does reject ranges that would lock the
+    server out of itself or are nonsensical to ban.
+    """
+    import ipaddress
+
+    ip = (ip or "").strip()
+    try:
+        addr = ipaddress.IPv4Address(ip)
+    except (ipaddress.AddressValueError, ValueError):
+        raise CommandError("Invalid IPv4 address", 400)
+
+    if addr.is_loopback:
+        raise CommandError("Cannot ban loopback address", 400)
+    if addr.is_unspecified:
+        raise CommandError("Cannot ban wildcard address (0.0.0.0)", 400)
+    if addr.is_link_local:
+        raise CommandError("Cannot ban link-local address", 400)
+    if addr.is_multicast:
+        raise CommandError("Cannot ban multicast address", 400)
+    if addr.is_reserved:
+        raise CommandError("Cannot ban reserved address", 400)
+    return str(addr)
 
 
 def _validate_ip_or_cidr(value: str) -> str:
@@ -762,7 +794,36 @@ COMMANDS = {
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     """Handle a client connection."""
     addr = writer.get_extra_info("peername")
-    logger.debug(f"Client connected: {addr}")
+    sock = writer.get_extra_info("socket")
+
+    # Verify connecting peer via SO_PEERCRED (defense in depth on top of
+    # filesystem permissions). Only processes running as root or the
+    # allowed peer user (typically www-data) may issue commands.
+    try:
+        import socket as _socket
+        import struct
+        creds = sock.getsockopt(
+            _socket.SOL_SOCKET, _socket.SO_PEERCRED, struct.calcsize("3i")
+        )
+        peer_pid, peer_uid, peer_gid = struct.unpack("3i", creds)
+        try:
+            allowed_uid = pwd.getpwnam(ALLOWED_PEER_USER).pw_uid
+        except KeyError:
+            allowed_uid = None
+        if peer_uid != 0 and (allowed_uid is None or peer_uid != allowed_uid):
+            logger.warning(
+                f"Rejected connection from unauthorised peer "
+                f"pid={peer_pid} uid={peer_uid} gid={peer_gid}"
+            )
+            writer.close()
+            await writer.wait_closed()
+            return
+        logger.debug(f"Client connected: pid={peer_pid} uid={peer_uid} gid={peer_gid}")
+    except (AttributeError, OSError) as e:
+        # SO_PEERCRED unavailable (e.g. non-Linux). Fall back to file
+        # permission protection only and log the situation.
+        logger.warning(f"Could not verify peer credentials: {e}")
+        logger.debug(f"Client connected: {addr}")
 
     try:
         while True:
@@ -782,9 +843,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         response = COMMANDS[command](params)
                     except CommandError as e:
                         response = {"error": e.message, "code": e.code}
-                    except Exception as e:
+                    except Exception:
                         logger.exception(f"Command failed: {command}")
-                        response = {"error": str(e), "code": 500}
+                        response = {"error": "Internal helper error", "code": 500}
 
             except json.JSONDecodeError:
                 response = {"error": "Invalid JSON", "code": 400}

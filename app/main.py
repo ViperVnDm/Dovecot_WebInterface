@@ -8,9 +8,8 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.database import init_db
@@ -19,12 +18,15 @@ from app.services.alert_checker import alert_checker_loop, storage_collector_loo
 # Import routers
 from app.api import auth, users, queue, logs, storage, partials, alerts
 from app.core.security import get_current_user
+from app.core.limiter import limiter
+from app.core.middleware import (
+    CSRFMiddleware,
+    SecurityHeadersMiddleware,
+    get_csrf_token,
+)
 from app.database import get_db, AdminUser
 
 settings = get_settings()
-
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -48,19 +50,31 @@ app = FastAPI(
     description="Web-based admin console for Dovecot/Postfix mail servers",
     version="0.1.0",
     lifespan=lifespan,
+    # Disable interactive docs in production. They expose the full API
+    # schema and would be reachable to anyone who can hit the server.
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
 )
 
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Security middleware (added in reverse order; CSRF runs before headers)
+app.add_middleware(SecurityHeadersMiddleware, hsts=not settings.debug)
+app.add_middleware(
+    CSRFMiddleware,
+    cookie_name=settings.csrf_cookie_name,
+    secure=settings.cookie_secure,
+)
+
 # Static files
 static_path = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
-# Templates
-templates_path = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=templates_path)
+# Templates (shared instance with CSRF helper installed)
+from app.templates_setup import templates  # noqa: E402
 
 # Include routers
 app.include_router(auth.router, tags=["auth"])
@@ -89,8 +103,9 @@ async def dashboard(
 ):
     """Main dashboard page."""
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
-        {"request": request, "title": "Dashboard", "current_user": current_user},
+        {"title": "Dashboard", "current_user": current_user},
     )
 
 
@@ -101,8 +116,9 @@ async def users_page(
 ):
     """User management page."""
     return templates.TemplateResponse(
+        request,
         "users/list.html",
-        {"request": request, "title": "User Management", "current_user": current_user},
+        {"title": "User Management", "current_user": current_user},
     )
 
 
@@ -113,8 +129,9 @@ async def queue_page(
 ):
     """Mail queue page."""
     return templates.TemplateResponse(
+        request,
         "queue/index.html",
-        {"request": request, "title": "Mail Queue", "current_user": current_user},
+        {"title": "Mail Queue", "current_user": current_user},
     )
 
 
@@ -125,8 +142,9 @@ async def logs_page(
 ):
     """Logs viewer page."""
     return templates.TemplateResponse(
+        request,
         "logs/index.html",
-        {"request": request, "title": "Mail Logs", "current_user": current_user},
+        {"title": "Mail Logs", "current_user": current_user},
     )
 
 
@@ -137,8 +155,9 @@ async def storage_page(
 ):
     """Storage monitoring page."""
     return templates.TemplateResponse(
+        request,
         "storage/index.html",
-        {"request": request, "title": "Storage", "current_user": current_user},
+        {"title": "Storage", "current_user": current_user},
     )
 
 
@@ -149,6 +168,7 @@ async def alerts_page(
 ):
     """Alerts configuration page."""
     return templates.TemplateResponse(
+        request,
         "alerts/index.html",
-        {"request": request, "title": "Alerts", "current_user": current_user},
+        {"title": "Alerts", "current_user": current_user},
     )

@@ -3,7 +3,11 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_SECRET_KEY = "change-me-in-production"
 
 
 class Settings(BaseSettings):
@@ -16,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    secret_key: str = "change-me-in-production"
+    secret_key: str = DEFAULT_SECRET_KEY
     debug: bool = False
     app_name: str = "Mail Server Admin"
 
@@ -25,7 +29,8 @@ class Settings(BaseSettings):
 
     # Session
     session_expire_hours: int = 24
-    session_cookie_name: str = "session"
+    session_cookie_name: str = "dwa_session"
+    csrf_cookie_name: str = "dwa_csrf"
 
     # Mail server paths
     mail_log_path: Path = Path("/var/log/mail.log")
@@ -46,6 +51,23 @@ class Settings(BaseSettings):
     # Security
     bcrypt_rounds: int = 12
     cookie_secure: bool = True
+
+    @field_validator("secret_key")
+    @classmethod
+    def _check_secret_key(cls, v: str, info) -> str:
+        # Reject the default placeholder unless we are running in debug mode.
+        # Pydantic v2 validators don't see other field values reliably, so
+        # we re-check `debug` from the raw env at runtime.
+        import os
+        debug_env = os.environ.get("DEBUG", "false").lower() in ("1", "true", "yes")
+        if v == DEFAULT_SECRET_KEY and not debug_env:
+            raise ValueError(
+                "SECRET_KEY must be set to a unique value in production. "
+                "Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        if len(v) < 16:
+            raise ValueError("SECRET_KEY must be at least 16 characters")
+        return v
 
 
 @lru_cache

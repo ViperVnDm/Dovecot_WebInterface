@@ -93,19 +93,27 @@ read -p "Admin username: " ADMIN_USER
 read -s -p "Admin password: " ADMIN_PASS
 echo ""
 
+# Pass credentials via environment to avoid shell-injection through quotes
+# in the username or password (CVE-style: a password containing ' would
+# break out of the Python string literal).
+ADMIN_USER="$ADMIN_USER" ADMIN_PASS="$ADMIN_PASS" INSTALL_DIR="$INSTALL_DIR" \
 "$VENV_DIR/bin/python" -c "
 import asyncio
+import os
 import sys
-sys.path.insert(0, '$INSTALL_DIR')
+sys.path.insert(0, os.environ['INSTALL_DIR'])
 from app.database import create_initial_admin, init_db
 
 async def main():
     await init_db()
-    await create_initial_admin('$ADMIN_USER', '$ADMIN_PASS')
+    await create_initial_admin(os.environ['ADMIN_USER'], os.environ['ADMIN_PASS'])
     print('Admin user created successfully')
 
 asyncio.run(main())
 "
+
+# Scrub the password from this shell's memory
+unset ADMIN_PASS
 
 # Enable and start services
 echo_info "Enabling and starting services..."
