@@ -1,0 +1,44 @@
+{% if suggestions %}
+<div class="space-y-3">
+    {% for s in suggestions %}
+    <div class="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3">
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="font-mono text-sm text-gray-900">{{ s.target }}</span>
+                {% if s.action == "ban" %}
+                <span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700 uppercase">ban</span>
+                {% else %}
+                <span class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 uppercase">allowlist</span>
+                {% endif %}
+                <span class="text-xs text-gray-500">confidence {{ s.confidence }}%</span>
+            </div>
+            <p class="text-sm text-gray-700">{{ s.reason }}</p>
+            {% if s.evidence %}
+            <details class="mt-2">
+                <summary class="text-xs text-blue-600 cursor-pointer hover:underline">View evidence ({{ s.evidence|length }} lines)</summary>
+                <pre class="mt-1 text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto">{% for line in s.evidence %}{{ line }}
+{% endfor %}</pre>
+            </details>
+            {% endif %}
+        </div>
+        <div class="flex gap-2 shrink-0">
+            <button hx-post="/api/agent/suggestions/{{ s.id }}/approve"
+                    hx-target="#agent-suggestions"
+                    hx-swap="innerHTML"
+                    hx-confirm="Apply '{{ s.action }}' for {{ s.target }}?"
+                    class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+                Approve
+            </button>
+            <button hx-post="/api/agent/suggestions/{{ s.id }}/reject"
+                    hx-target="#agent-suggestions"
+                    hx-swap="innerHTML"
+                    class="px-3 py-1.5 text-sm border border-gray-300 hover:bg-gray-50 rounded-lg">
+                Reject
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-sm text-gray-500">No pending suggestions.</p>
+{% endif %}

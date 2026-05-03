@@ -50,6 +50,8 @@ def make_mock_helper() -> AsyncMock:
     mock.list_banned_ips.return_value = []
     mock.ban_ip.return_value = {"success": True, "ip": "1.2.3.4"}
     mock.unban_ip.return_value = {"success": True, "ip": "1.2.3.4"}
+    mock.read_auth_log.return_value = []
+    mock.read_ufw_log.return_value = []
     return mock
 
 
@@ -113,10 +115,13 @@ async def client(db_engine):
 
     with patch("app.main.alert_checker_loop", side_effect=_noop), \
          patch("app.main.storage_collector_loop", side_effect=_noop), \
+         patch("app.main.agent_loop", side_effect=_noop), \
          patch("app.core.permissions.get_helper_client", return_value=mock_helper), \
          patch("app.api.logs.get_helper_client", return_value=mock_helper), \
          patch("app.api.partials.get_helper_client", return_value=mock_helper), \
-         patch("app.api.users.get_helper_client", return_value=mock_helper):
+         patch("app.api.users.get_helper_client", return_value=mock_helper), \
+         patch("app.api.agent.get_helper_client", return_value=mock_helper), \
+         patch("app.services.log_agent.get_helper_client", return_value=mock_helper):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:

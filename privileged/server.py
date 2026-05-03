@@ -33,6 +33,8 @@ SOCKET_PATH = Path(os.environ.get("HELPER_SOCKET_PATH", "/run/dovecot-webadmin/h
 MAIL_GROUP = os.environ.get("MAIL_GROUP", "mail")
 MAIL_LOG_PATH = Path(os.environ.get("MAIL_LOG_PATH", "/var/log/mail.log"))
 MAIL_SPOOL_PATH = Path(os.environ.get("MAIL_SPOOL_PATH", "/var/mail"))
+AUTH_LOG_PATH = Path(os.environ.get("AUTH_LOG_PATH", "/var/log/auth.log"))
+UFW_LOG_PATH = Path(os.environ.get("UFW_LOG_PATH", "/var/log/ufw.log"))
 
 # Allowed peer username for SO_PEERCRED check (defaults to www-data; override
 # with HELPER_ALLOWED_PEER for testing or non-standard deployments).
@@ -663,6 +665,98 @@ def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
     return {"mailboxes": mailboxes}
 
 
+# ============== Agent Log Commands ==============
+
+
+_AUTH_LOG_KEYWORDS = (
+    "Failed password",
+    "Invalid user",
+    "authentication failure",
+    "not allowed because",
+    "Connection closed by invalid user",
+    "Disconnected from invalid user",
+)
+_UFW_BLOCK_MARKER = "[UFW BLOCK]"
+_UFW_SRC_RE = re.compile(r"\bSRC=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+_UFW_DPT_RE = re.compile(r"\bDPT=(\d+)\b")
+_UFW_PROTO_RE = re.compile(r"\bPROTO=(\w+)\b")
+
+
+def _tail_matching_lines(path: Path, predicate, max_lines: int) -> list[str]:
+    """Return up to max_lines lines from path that satisfy predicate.
+
+    Reads the whole file and filters in Python — these logs are typically
+    rotated (logrotate) so the active file stays small enough for this to be
+    cheap. For a hot mail server that needs streaming, the agent loop's
+    interval already bounds how stale the data can be.
+    """
+    if not path.exists():
+        return []
+    matched: list[str] = []
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if predicate(line):
+                    matched.append(line)
+                    if len(matched) > max_lines:
+                        # Keep only the most recent max_lines entries.
+                        matched.pop(0)
+    except OSError as exc:
+        raise CommandError(f"Failed to read {path}: {exc}", 500)
+    return matched
+
+
+def cmd_read_auth_log(params: dict[str, Any]) -> dict[str, Any]:
+    """Return recent auth.log lines matching SSH probing patterns."""
+    max_lines = max(1, min(int(params.get("max_lines", 1000)), 5000))
+
+    def is_probe(line: str) -> bool:
+        return any(kw in line for kw in _AUTH_LOG_KEYWORDS)
+
+    raw_lines = _tail_matching_lines(AUTH_LOG_PATH, is_probe, max_lines)
+    entries = []
+    for line in raw_lines:
+        m_ip = IP_ADDR_RE.search(line)
+        if not m_ip:
+            continue
+        # Best-effort timestamp: prefix up to the first space-separated host token.
+        # Lines come in either ISO format (rsyslog with FileFormat) or
+        # legacy syslog ("Mar  4 10:23:45 host …"). We keep the raw line as
+        # ground truth and let the LLM read it directly.
+        entries.append({
+            "raw": line,
+            "src_ip": m_ip.group(1),
+            "service": "ssh",
+        })
+    return {"entries": entries}
+
+
+def cmd_read_ufw_log(params: dict[str, Any]) -> dict[str, Any]:
+    """Return recent ufw.log lines for blocked connections."""
+    max_lines = max(1, min(int(params.get("max_lines", 1000)), 5000))
+
+    def is_block(line: str) -> bool:
+        return _UFW_BLOCK_MARKER in line
+
+    raw_lines = _tail_matching_lines(UFW_LOG_PATH, is_block, max_lines)
+    entries = []
+    for line in raw_lines:
+        m_ip = _UFW_SRC_RE.search(line)
+        if not m_ip:
+            continue
+        m_dpt = _UFW_DPT_RE.search(line)
+        m_proto = _UFW_PROTO_RE.search(line)
+        entries.append({
+            "raw": line,
+            "src_ip": m_ip.group(1),
+            "service": "ufw",
+            "dport": int(m_dpt.group(1)) if m_dpt else None,
+            "proto": m_proto.group(1) if m_proto else None,
+        })
+    return {"entries": entries}
+
+
 # ============== IP Ban Commands ==============
 
 
@@ -784,6 +878,8 @@ COMMANDS = {
     "read_logs": cmd_read_logs,
     "get_log_stats": cmd_get_log_stats,
     "mailbox_sizes": cmd_mailbox_sizes,
+    "read_auth_log": cmd_read_auth_log,
+    "read_ufw_log": cmd_read_ufw_log,
     # IP banning
     "ban_ip": cmd_ban_ip,
     "unban_ip": cmd_unban_ip,

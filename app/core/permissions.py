@@ -165,6 +165,16 @@ class PrivilegedHelperClient:
         """Get today's sent/received/bounced/error counts from mail.log."""
         return await self._send_command("get_log_stats", {})
 
+    async def read_auth_log(self, max_lines: int = 1000) -> list[dict[str, Any]]:
+        """Read recent SSH auth probing lines."""
+        response = await self._send_command("read_auth_log", {"max_lines": max_lines})
+        return response.get("entries", [])
+
+    async def read_ufw_log(self, max_lines: int = 1000) -> list[dict[str, Any]]:
+        """Read recent UFW BLOCK lines."""
+        response = await self._send_command("read_ufw_log", {"max_lines": max_lines})
+        return response.get("entries", [])
+
     async def get_mailbox_sizes(self) -> list[dict[str, Any]]:
         """Get mailbox sizes for all users."""
         response = await self._send_command("mailbox_sizes", {})

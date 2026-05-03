@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     mail_log_path: Path = Path("/var/log/mail.log")
     mail_spool_path: Path = Path("/var/mail")
     postfix_queue_path: Path = Path("/var/spool/postfix")
+    auth_log_path: Path = Path("/var/log/auth.log")
+    ufw_log_path: Path = Path("/var/log/ufw.log")
 
     # Privileged helper
     helper_socket_path: Path = Path("/run/dovecot-webadmin/helper.sock")
@@ -51,6 +53,12 @@ class Settings(BaseSettings):
     # Security
     bcrypt_rounds: int = 12
     cookie_secure: bool = True
+
+    # Log-triage agent (Anthropic)
+    anthropic_api_key: str = ""
+    log_agent_model: str = "claude-haiku-4-5-20251001"
+    log_agent_daily_cost_cap_usd: float = 1.0
+    log_agent_max_ips_per_run: int = 50
 
     @field_validator("secret_key")
     @classmethod

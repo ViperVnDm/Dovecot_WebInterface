@@ -14,9 +14,10 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.database import init_db
 from app.services.alert_checker import alert_checker_loop, storage_collector_loop
+from app.services.log_agent import agent_loop
 
 # Import routers
-from app.api import auth, users, queue, logs, storage, partials, alerts
+from app.api import auth, users, queue, logs, storage, partials, alerts, agent
 from app.core.security import get_current_user
 from app.core.limiter import limiter
 from app.core.middleware import (
@@ -35,10 +36,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     checker_task = asyncio.create_task(alert_checker_loop())
     storage_task = asyncio.create_task(storage_collector_loop())
+    agent_task = asyncio.create_task(agent_loop())
     yield
     checker_task.cancel()
     storage_task.cancel()
-    for task in (checker_task, storage_task):
+    agent_task.cancel()
+    for task in (checker_task, storage_task, agent_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -84,6 +87,7 @@ app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(storage.router, prefix="/api/storage", tags=["storage"])
 app.include_router(partials.router, prefix="/partials", tags=["partials"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 
 
 @app.get("/")
@@ -171,4 +175,17 @@ async def alerts_page(
         request,
         "alerts/index.html",
         {"title": "Alerts", "current_user": current_user},
+    )
+
+
+@app.get("/agent")
+async def agent_page(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+):
+    """Log-triage agent page."""
+    return templates.TemplateResponse(
+        request,
+        "logs/agent.html",
+        {"title": "Log Agent", "current_user": current_user},
     )

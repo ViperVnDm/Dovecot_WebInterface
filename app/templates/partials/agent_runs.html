@@ -1,0 +1,38 @@
+{% if runs %}
+<div class="overflow-x-auto">
+    <table class="min-w-full text-sm">
+        <thead>
+            <tr class="text-left text-xs text-gray-500 uppercase border-b border-gray-200">
+                <th class="px-3 py-2">Started</th>
+                <th class="px-3 py-2">Lines</th>
+                <th class="px-3 py-2">Suggestions</th>
+                <th class="px-3 py-2">Tokens (in/out)</th>
+                <th class="px-3 py-2">Cost</th>
+                <th class="px-3 py-2">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in runs %}
+            <tr class="border-b border-gray-100">
+                <td class="px-3 py-2 text-gray-700 whitespace-nowrap">{{ r.started_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                <td class="px-3 py-2">{{ r.lines_analyzed }}</td>
+                <td class="px-3 py-2">{{ r.suggestions_created }}</td>
+                <td class="px-3 py-2 text-gray-500">{{ r.input_tokens }} / {{ r.output_tokens }}</td>
+                <td class="px-3 py-2">${{ "%.4f"|format(r.cost_usd) }}</td>
+                <td class="px-3 py-2">
+                    {% if r.error %}
+                    <span class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800" title="{{ r.error }}">{{ r.error|truncate(40) }}</span>
+                    {% elif r.finished_at %}
+                    <span class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">done</span>
+                    {% else %}
+                    <span class="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">running</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-sm text-gray-500">No runs yet.</p>
+{% endif %}

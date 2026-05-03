@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Log Triage Agent</h1>
+            <p class="text-sm text-gray-500 mt-1">
+                Reviews recent mail / SSH / UFW logs and proposes IPs to ban or add to the never-ban list.
+                Suggestions require explicit approval.
+            </p>
+        </div>
+        <button hx-post="/api/agent/run-now"
+                hx-target="#agent-runs"
+                hx-swap="innerHTML"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
+            Run now
+        </button>
+    </div>
+
+    <!-- Settings -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Agent Settings</h2>
+        </div>
+        <div id="agent-settings"
+             class="px-6 py-4"
+             hx-get="/api/agent/settings"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Pending suggestions -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Pending Suggestions</h2>
+        </div>
+        <div id="agent-suggestions"
+             class="px-6 py-4"
+             hx-get="/api/agent/suggestions"
+             hx-trigger="load, every 30s"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Run history -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Recent Runs</h2>
+        </div>
+        <div id="agent-runs"
+             class="px-6 py-4"
+             hx-get="/api/agent/runs"
+             hx-trigger="load, every 60s"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

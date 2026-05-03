@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float, UniqueConstraint
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float, UniqueConstraint, Index
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -155,6 +155,66 @@ class AuditLog(Base):
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
+
+
+class LogAgentRun(Base):
+    """One row per agent run, used for cost tracking and history."""
+
+    __tablename__ = "log_agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lines_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    suggestions_created: Mapped[int] = mapped_column(Integer, default=0)
+    model: Mapped[str] = mapped_column(String(64), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    suggestions: Mapped[list["BanSuggestion"]] = relationship(
+        "BanSuggestion", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class BanSuggestion(Base):
+    """LLM-generated suggestion to ban an IP/CIDR or add it to the allowlist.
+
+    Suggestions are advisory only — applying one calls the privileged helper
+    via the existing approve route, which re-validates the target.
+    """
+
+    __tablename__ = "ban_suggestions"
+    __table_args__ = (
+        Index("ix_ban_suggestions_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    target: Mapped[str] = mapped_column(String(64), nullable=False)  # IP or CIDR
+    action: Mapped[str] = mapped_column(String(16), nullable=False)  # "ban" | "allowlist"
+    confidence: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+    reason: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[str] = mapped_column(Text, default="")  # JSON-serialized list of log lines
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # "pending" | "approved" | "rejected" | "expired"
+    reviewed_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("log_agent_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
+    run: Mapped["LogAgentRun | None"] = relationship("LogAgentRun", back_populates="suggestions")
 
 
 # Database engine and session
