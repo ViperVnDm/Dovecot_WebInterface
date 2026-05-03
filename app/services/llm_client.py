@@ -135,7 +135,8 @@ def _format_user_message(grouped: list[IPSummary]) -> str:
             f"- time_range: {s.time_range}\n"
             f"- samples:"
         )
-        for ln in s.sample_lines[:5]:
+        # 3 representative lines is enough for triage; more inflates input tokens.
+        for ln in s.sample_lines[:3]:
             lines.append(f"    {ln}")
     return "\n".join(lines)
 
@@ -156,9 +157,12 @@ async def triage_ips(grouped: list[IPSummary]) -> tuple[list[Suggestion], TokenU
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     model = settings.log_agent_model
 
+    # 8192 leaves room for ~50 IPs of structured JSON output. Hitting
+    # max_tokens silently truncates the tool_use input and the SDK then
+    # returns an empty parse — so we want headroom here, not a tight cap.
     response = await client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=8192,
         system=[
             {
                 "type": "text",
@@ -170,6 +174,16 @@ async def triage_ips(grouped: list[IPSummary]) -> tuple[list[Suggestion], TokenU
         tool_choice={"type": "tool", "name": "record_suggestions"},
         messages=[{"role": "user", "content": _format_user_message(grouped)}],
     )
+
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason == "max_tokens":
+        # Tool_use block is likely truncated — partial JSON, empty parse.
+        # Surface this loudly so the run record shows it.
+        logger.warning(
+            "Triage hit max_tokens with %d IPs in input; output was truncated. "
+            "Reduce LOG_AGENT_MAX_IPS_PER_RUN or raise max_tokens.",
+            len(grouped),
+        )
 
     # Parse tool_use block.
     suggestions: list[Suggestion] = []
@@ -202,8 +216,9 @@ async def triage_ips(grouped: list[IPSummary]) -> tuple[list[Suggestion], TokenU
         cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
     )
     logger.info(
-        "Triage complete: %d suggestions, in=%d out=%d cache_w=%d cache_r=%d cost=$%.4f",
+        "Triage complete: %d suggestions, stop=%s, in=%d out=%d cache_w=%d cache_r=%d cost=$%.4f",
         len(suggestions),
+        stop_reason,
         token_usage.input_tokens,
         token_usage.output_tokens,
         token_usage.cache_creation_tokens,

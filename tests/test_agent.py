@@ -60,6 +60,20 @@ def test_prefilter_min_events_threshold():
     assert "2.2.2.2" in targets
 
 
+def test_prefilter_skips_recently_triaged_targets():
+    entries = [_entry("3.3.3.3")] * 5 + [_entry("4.4.4.4")] * 5
+    summaries = log_agent.prefilter_entries(
+        entries,
+        allowlist=[],
+        already_banned=set(),
+        max_ips=10,
+        recent_targets={"3.3.3.3"},
+    )
+    targets = {s.ip for s in summaries}
+    assert "3.3.3.3" not in targets
+    assert "4.4.4.4" in targets
+
+
 def test_prefilter_caps_at_max_ips_and_sorts_by_count():
     entries = (
         [_entry("1.0.0.1")] * 10

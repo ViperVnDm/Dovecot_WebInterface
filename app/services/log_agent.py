@@ -38,6 +38,7 @@ DEFAULT_INTERVAL_MIN = 10
 SUGGESTION_EXPIRY_DAYS = 7
 MIN_EVENTS_FOR_TRIAGE = 3
 LINES_PER_SOURCE = 1000  # cap when reading each log source
+IP_COOLDOWN_DAYS = 7  # don't re-triage an IP that we've already triaged within this many days
 
 
 # ── Settings I/O ─────────────────────────────────────────────────────────────
@@ -108,17 +109,25 @@ def prefilter_entries(
     already_banned: set[str],
     max_ips: int,
     min_events: int = MIN_EVENTS_FOR_TRIAGE,
+    recent_targets: set[str] | None = None,
 ) -> list[IPSummary]:
     """Group raw log entries by source IP and drop ones we already handle.
 
     Pure function so it can be unit-tested without the helper or DB.
+
+    `recent_targets` is the set of IPs/CIDRs the agent has already triaged
+    within the cooldown window. They're skipped entirely so we don't keep
+    spending tokens re-asking about the same probers every interval.
     """
+    skip = recent_targets or set()
     by_ip: dict[str, list[dict]] = defaultdict(list)
     for entry in raw_entries:
         ip = _extract_ip(entry)
         if not ip:
             continue
         if ip in already_banned:
+            continue
+        if ip in skip:
             continue
         if is_allowlisted(ip, allowlist):
             continue
@@ -156,6 +165,19 @@ async def _has_pending_suggestion(db, target: str) -> bool:
         ).limit(1)
     )
     return result.scalar_one_or_none() is not None
+
+
+async def _recently_triaged_targets(db, days: int = IP_COOLDOWN_DAYS) -> set[str]:
+    """Return the set of targets the agent has triaged within the cooldown.
+
+    Includes every status (pending / approved / rejected / expired / ignored)
+    so we don't keep re-asking the LLM about IPs we've already decided on.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(BanSuggestion.target).where(BanSuggestion.created_at > cutoff)
+    )
+    return {row[0] for row in result.all()}
 
 
 async def _expire_old_suggestions(db) -> int:
@@ -249,6 +271,7 @@ async def run_once(force: bool = False) -> LogAgentRun:
     async with async_session() as db:
         allowlist_raw = await _get_setting(db, SETTING_BAN_ALLOWLIST, "") or ""
         allowlist = _parse_allowlist(allowlist_raw)
+        recent_targets = await _recently_triaged_targets(db)
     try:
         already_banned = set(await helper.list_banned_ips())
     except PrivilegedHelperError:
@@ -259,6 +282,7 @@ async def run_once(force: bool = False) -> LogAgentRun:
         allowlist=allowlist,
         already_banned=already_banned,
         max_ips=int(settings.log_agent_max_ips_per_run),
+        recent_targets=recent_targets,
     )
 
     suggestions: list[Suggestion] = []
@@ -277,6 +301,20 @@ async def run_once(force: bool = False) -> LogAgentRun:
     async with async_session() as db:
         for s in suggestions:
             if s.action == "ignore":
+                # Record the LLM's "ignore" decision so we don't keep
+                # re-triaging this IP on every subsequent run. status is
+                # "ignored" so the suggestions UI never surfaces it; the
+                # cooldown query ignores status entirely.
+                if not await _has_pending_suggestion(db, s.target):
+                    db.add(BanSuggestion(
+                        target=s.target,
+                        action="ignore",
+                        confidence=s.confidence,
+                        reason=s.reason,
+                        evidence=json.dumps(s.evidence),
+                        status="ignored",
+                        run_id=run.id,
+                    ))
                 continue
             if await _has_pending_suggestion(db, s.target):
                 continue
