@@ -177,6 +177,32 @@ async def reject_suggestion(
     return await list_suggestions(request, current_user=current_user, db=db)
 
 
+@router.post("/suggestions/reject-all")
+async def reject_all_pending(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark every pending suggestion rejected. Useful for clearing backlog."""
+    from sqlalchemy import update
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        update(BanSuggestion)
+        .where(BanSuggestion.status == "pending")
+        .values(status="rejected", reviewed_by=current_user.id, reviewed_at=now)
+    )
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="reject_all_suggestions",
+        resource_type="ban_suggestion",
+        resource_id="*",
+        details=json.dumps({"count": result.rowcount or 0}),
+    ))
+    await db.commit()
+    return await list_suggestions(request, current_user=current_user, db=db)
+
+
 # ── Run-now / runs history ───────────────────────────────────────────────────
 
 

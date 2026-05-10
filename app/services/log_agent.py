@@ -34,6 +34,17 @@ SETTING_AGENT_INTERVAL_MIN = "log_agent_interval_min"
 SETTING_AGENT_DAILY_COST_USD = "log_agent_daily_cost_usd"
 SETTING_AGENT_DAILY_COST_DATE = "log_agent_daily_cost_date"
 
+# Per-source watermark keys — store the last log line we processed so the
+# next run picks up only what's new.
+SETTING_MARKER_PREFIX = "log_agent_marker_"
+LOG_SOURCES: tuple[tuple[str, str | None], ...] = (
+    ("mail_postfix", "postfix"),
+    ("mail_dovecot", "dovecot"),
+    ("mail_spamd", "spamd"),
+    ("auth", None),
+    ("ufw", None),
+)
+
 DEFAULT_INTERVAL_MIN = 10
 SUGGESTION_EXPIRY_DAYS = 7
 MIN_EVENTS_FOR_TRIAGE = 3
@@ -110,6 +121,7 @@ def prefilter_entries(
     max_ips: int,
     min_events: int = MIN_EVENTS_FOR_TRIAGE,
     recent_targets: set[str] | None = None,
+    skip_ufw_only: bool = True,
 ) -> list[IPSummary]:
     """Group raw log entries by source IP and drop ones we already handle.
 
@@ -118,6 +130,12 @@ def prefilter_entries(
     `recent_targets` is the set of IPs/CIDRs the agent has already triaged
     within the cooldown window. They're skipped entirely so we don't keep
     spending tokens re-asking about the same probers every interval.
+
+    `skip_ufw_only` drops IPs whose only evidence is `[UFW BLOCK]` lines.
+    UFW already dropped those packets at the network layer (they hit closed
+    ports), so adding an explicit `ufw deny from <ip>` rule does nothing.
+    We only want to triage IPs that touched a service that's actually
+    listening (postfix / dovecot / sshd).
     """
     skip = recent_targets or set()
     by_ip: dict[str, list[dict]] = defaultdict(list)
@@ -138,6 +156,10 @@ def prefilter_entries(
         if len(events) < min_events:
             continue
         services = sorted({e.get("service", "?") for e in events})
+        if skip_ufw_only and services == ["ufw"]:
+            # Every event for this IP is a UFW block on a closed port.
+            # UFW already dropped the traffic — no action for us to take.
+            continue
         sample_lines = [e.get("raw") or e.get("message") or "" for e in events[:5]]
         # Best-effort time range — first and last raw timestamps if present
         first = events[0].get("timestamp") or events[0].get("raw", "")[:32]
@@ -195,32 +217,57 @@ async def _expire_old_suggestions(db) -> int:
 
 
 async def _gather_log_entries() -> list[dict]:
-    """Pull recent log entries from every source the agent watches."""
+    """Pull recent log entries from every source the agent watches.
+
+    Each source uses a persistent watermark (last line seen) so subsequent
+    runs only process new lines. Markers are stored in ``app_settings``.
+    """
     helper = get_helper_client()
     all_entries: list[dict] = []
 
-    for service in ("postfix", "dovecot", "spamd"):
+    # Load all markers in one shot.
+    async with async_session() as db:
+        markers = {
+            name: (await _get_setting(db, SETTING_MARKER_PREFIX + name, "") or "")
+            for name, _service in LOG_SOURCES
+        }
+
+    new_markers: dict[str, str] = {}
+
+    for name, service in LOG_SOURCES:
+        marker_in = markers.get(name, "")
         try:
-            entries = await helper.read_logs(lines=LINES_PER_SOURCE, service=service)
-            for e in entries:
-                e.setdefault("service", service)
-                # cmd_read_logs returns "ips" not "src_ip" — normalize.
-                if "src_ip" not in e and e.get("ips"):
-                    e["src_ip"] = e["ips"][0]
-                e.setdefault("raw", e.get("message", ""))
+            if service in ("postfix", "dovecot", "spamd"):
+                entries, marker_out = await helper.read_logs_with_marker(
+                    lines=LINES_PER_SOURCE, service=service, since_line=marker_in,
+                )
+                for e in entries:
+                    e.setdefault("service", service)
+                    if "src_ip" not in e and e.get("ips"):
+                        e["src_ip"] = e["ips"][0]
+                    e.setdefault("raw", e.get("message", ""))
+            elif name == "auth":
+                entries, marker_out = await helper.read_auth_log(
+                    max_lines=LINES_PER_SOURCE, since_line=marker_in,
+                )
+            elif name == "ufw":
+                entries, marker_out = await helper.read_ufw_log(
+                    max_lines=LINES_PER_SOURCE, since_line=marker_in,
+                )
+            else:
+                continue
             all_entries.extend(entries)
+            if marker_out:
+                new_markers[name] = marker_out
         except PrivilegedHelperError as exc:
-            logger.warning("read_logs(%s) failed: %s", service, exc.message)
+            logger.warning("read for %s failed: %s", name, exc.message)
 
-    try:
-        all_entries.extend(await helper.read_auth_log(max_lines=LINES_PER_SOURCE))
-    except PrivilegedHelperError as exc:
-        logger.warning("read_auth_log failed: %s", exc.message)
-
-    try:
-        all_entries.extend(await helper.read_ufw_log(max_lines=LINES_PER_SOURCE))
-    except PrivilegedHelperError as exc:
-        logger.warning("read_ufw_log failed: %s", exc.message)
+    # Persist watermarks so the next run picks up only what's new.
+    if new_markers:
+        async with async_session() as db:
+            for name, value in new_markers.items():
+                await _set_setting(db, SETTING_MARKER_PREFIX + name, value)
+            await db.commit()
 
     return all_entries
 

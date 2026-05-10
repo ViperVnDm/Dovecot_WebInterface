@@ -50,8 +50,10 @@ def make_mock_helper() -> AsyncMock:
     mock.list_banned_ips.return_value = []
     mock.ban_ip.return_value = {"success": True, "ip": "1.2.3.4"}
     mock.unban_ip.return_value = {"success": True, "ip": "1.2.3.4"}
-    mock.read_auth_log.return_value = []
-    mock.read_ufw_log.return_value = []
+    # Agent log readers now return (entries, marker) tuples.
+    mock.read_auth_log.return_value = ([], "")
+    mock.read_ufw_log.return_value = ([], "")
+    mock.read_logs_with_marker.return_value = ([], "")
     return mock
 
 

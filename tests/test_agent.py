@@ -74,6 +74,36 @@ def test_prefilter_skips_recently_triaged_targets():
     assert "4.4.4.4" in targets
 
 
+def test_prefilter_drops_ufw_only_ips():
+    """UFW already dropped these packets — no point asking the LLM."""
+    entries = (
+        [_entry("5.5.5.5", service="ufw")] * 10
+        + [_entry("6.6.6.6", service="ufw")] * 4
+        + [_entry("6.6.6.6", service="ssh")] * 1
+    )
+    summaries = log_agent.prefilter_entries(
+        entries,
+        allowlist=[],
+        already_banned=set(),
+        max_ips=10,
+    )
+    targets = {s.ip for s in summaries}
+    assert "5.5.5.5" not in targets  # UFW-only — skipped
+    assert "6.6.6.6" in targets       # mixed — kept (SSH is actually listening)
+
+
+def test_prefilter_can_opt_out_of_ufw_only_skip():
+    entries = [_entry("7.7.7.7", service="ufw")] * 5
+    summaries = log_agent.prefilter_entries(
+        entries,
+        allowlist=[],
+        already_banned=set(),
+        max_ips=10,
+        skip_ufw_only=False,
+    )
+    assert {s.ip for s in summaries} == {"7.7.7.7"}
+
+
 def test_prefilter_caps_at_max_ips_and_sorts_by_count():
     entries = (
         [_entry("1.0.0.1")] * 10
@@ -101,11 +131,14 @@ async def test_run_once_creates_suggestions_with_stub_llm(auth_client, db_engine
     ac, mock_helper = auth_client
 
     # Helper returns enough events for 1.2.3.4 to pass the 3-event threshold.
-    mock_helper.read_logs.return_value = [
-        {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
-        {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
-        {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
-    ]
+    mock_helper.read_logs_with_marker.return_value = (
+        [
+            {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
+            {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
+            {"ips": ["1.2.3.4"], "message": "Failed login", "service": "postfix"},
+        ],
+        "tail-marker",
+    )
     mock_helper.list_banned_ips.return_value = []
 
     fake_suggestion = Suggestion(
@@ -234,6 +267,31 @@ async def test_approve_ban_rejected_when_target_allowlisted(auth_client, db_engi
     resp = await ac.post(f"/api/agent/suggestions/{sid}/approve")
     assert resp.status_code == 403
     mock_helper.ban_ip.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reject_all_marks_every_pending_rejected(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+
+    async with factory() as db:
+        await _create_pending(db, "10.10.10.1")
+        await _create_pending(db, "10.10.10.2")
+        await _create_pending(db, "10.10.10.3")
+
+    resp = await ac.post("/api/agent/suggestions/reject-all")
+    assert resp.status_code == 200
+
+    async with factory() as db:
+        rows = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.status == "pending")
+        )).scalars().all()
+        assert rows == []
+        rejected = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.status == "rejected")
+        )).scalars().all()
+        assert len(rejected) == 3
 
 
 @pytest.mark.asyncio

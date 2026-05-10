@@ -148,8 +148,13 @@ class PrivilegedHelperClient:
         level: str | None = None,
         service: str | None = None,
         search: str | None = None,
+        since_line: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Read mail logs."""
+        """Read mail logs.
+
+        Backwards-compatible: returns just the entries. For the agent's
+        incremental reads use ``read_logs_with_marker`` instead.
+        """
         params = {"lines": lines}
         if level:
             params["level"] = level
@@ -157,23 +162,54 @@ class PrivilegedHelperClient:
             params["service"] = service
         if search:
             params["search"] = search
+        if since_line:
+            params["since_line"] = since_line
 
         response = await self._send_command("read_logs", params)
         return response.get("entries", [])
+
+    async def read_logs_with_marker(
+        self,
+        lines: int = 100,
+        service: str | None = None,
+        since_line: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Read mail logs and return ``(entries, new_marker)`` for watermarking."""
+        params: dict[str, Any] = {"lines": lines}
+        if service:
+            params["service"] = service
+        if since_line:
+            params["since_line"] = since_line
+        response = await self._send_command("read_logs", params)
+        return response.get("entries", []), response.get("last_line", "") or ""
 
     async def get_log_stats(self) -> dict[str, int]:
         """Get today's sent/received/bounced/error counts from mail.log."""
         return await self._send_command("get_log_stats", {})
 
-    async def read_auth_log(self, max_lines: int = 1000) -> list[dict[str, Any]]:
-        """Read recent SSH auth probing lines."""
-        response = await self._send_command("read_auth_log", {"max_lines": max_lines})
-        return response.get("entries", [])
+    async def read_auth_log(
+        self,
+        max_lines: int = 1000,
+        since_line: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Read recent SSH auth probing lines. Returns (entries, new_marker)."""
+        params: dict[str, Any] = {"max_lines": max_lines}
+        if since_line:
+            params["since_line"] = since_line
+        response = await self._send_command("read_auth_log", params)
+        return response.get("entries", []), response.get("last_line", "") or ""
 
-    async def read_ufw_log(self, max_lines: int = 1000) -> list[dict[str, Any]]:
-        """Read recent UFW BLOCK lines."""
-        response = await self._send_command("read_ufw_log", {"max_lines": max_lines})
-        return response.get("entries", [])
+    async def read_ufw_log(
+        self,
+        max_lines: int = 1000,
+        since_line: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Read recent UFW BLOCK lines. Returns (entries, new_marker)."""
+        params: dict[str, Any] = {"max_lines": max_lines}
+        if since_line:
+            params["since_line"] = since_line
+        response = await self._send_command("read_ufw_log", params)
+        return response.get("entries", []), response.get("last_line", "") or ""
 
     async def get_mailbox_sizes(self) -> list[dict[str, Any]]:
         """Get mailbox sizes for all users."""

@@ -468,11 +468,17 @@ def cmd_release_message(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
-    """Read mail log entries."""
+    """Read mail log entries.
+
+    Supports an optional `since_line` marker — when set, only lines AFTER
+    that marker are returned, and the new tail line is echoed back as
+    `last_line` so callers can persist it for incremental reads.
+    """
     lines = min(int(params.get("lines", 100)), 1000)
     level = params.get("level")
     service = params.get("service")
     search = params.get("search")
+    since_line = params.get("since_line", "") or ""
 
     # Web interface logs come from journald
     if service == "webadmin":
@@ -488,7 +494,7 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
         # spamd) aren't drowned out by tail returning only recent lines that
         # happen to contain only postfix/dovecot entries.
         if not MAIL_LOG_PATH.exists():
-            return {"entries": []}
+            return {"entries": [], "last_line": since_line}
         try:
             with open(MAIL_LOG_PATH, errors="replace") as _f:
                 raw_lines = [
@@ -499,11 +505,17 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
             raise CommandError(f"Failed to read log: {exc}", 500)
     else:
         if not MAIL_LOG_PATH.exists():
-            return {"entries": []}
+            return {"entries": [], "last_line": since_line}
         stdout, stderr, rc = run_command(["tail", "-n", str(lines), str(MAIL_LOG_PATH)])
         if rc != 0:
             raise CommandError(f"Failed to read logs: {stderr}", 500)
         raw_lines = stdout.strip().split("\n") if stdout.strip() else []
+
+    # Remember the latest line for the caller's next watermark. Done BEFORE
+    # the marker slice so an idle interval (no new lines) still returns the
+    # current tail rather than an empty string.
+    new_last_line = raw_lines[-1] if raw_lines else since_line
+    raw_lines = _apply_marker(raw_lines, since_line)
 
     entries = []
     log_pattern = re.compile(
@@ -566,9 +578,10 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
                 "level": entry_level,
                 "message": message,
                 "ips": ips,
+                "raw": line,
             })
 
-    return {"entries": entries}
+    return {"entries": entries, "last_line": new_last_line}
 
 
 def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
@@ -707,41 +720,71 @@ def _tail_matching_lines(path: Path, predicate, max_lines: int) -> list[str]:
     return matched
 
 
+def _apply_marker(lines: list[str], since_line: str) -> list[str]:
+    """Return the slice of `lines` that comes after `since_line`.
+
+    If the marker isn't found (file was rotated, marker was lost, first run),
+    return the whole list. Callers cap the result themselves.
+    """
+    if not since_line:
+        return lines
+    # Find the LAST occurrence; identical syslog lines can repeat.
+    idx = -1
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i] == since_line:
+            idx = i
+            break
+    if idx < 0:
+        return lines
+    return lines[idx + 1:]
+
+
 def cmd_read_auth_log(params: dict[str, Any]) -> dict[str, Any]:
-    """Return recent auth.log lines matching SSH probing patterns."""
+    """Return recent auth.log lines matching SSH probing patterns.
+
+    Supports an optional `since_line` watermark — only lines after the
+    last-seen line are returned, and the new tail is echoed back as
+    `last_line` for the caller to persist.
+    """
     max_lines = max(1, min(int(params.get("max_lines", 1000)), 5000))
+    since_line = params.get("since_line", "") or ""
 
     def is_probe(line: str) -> bool:
         return any(kw in line for kw in _AUTH_LOG_KEYWORDS)
 
-    raw_lines = _tail_matching_lines(AUTH_LOG_PATH, is_probe, max_lines)
+    all_matched = _tail_matching_lines(AUTH_LOG_PATH, is_probe, max_lines)
+    new_lines = _apply_marker(all_matched, since_line)
     entries = []
-    for line in raw_lines:
+    for line in new_lines:
         m_ip = IP_ADDR_RE.search(line)
         if not m_ip:
             continue
-        # Best-effort timestamp: prefix up to the first space-separated host token.
-        # Lines come in either ISO format (rsyslog with FileFormat) or
-        # legacy syslog ("Mar  4 10:23:45 host …"). We keep the raw line as
-        # ground truth and let the LLM read it directly.
         entries.append({
             "raw": line,
             "src_ip": m_ip.group(1),
             "service": "ssh",
         })
-    return {"entries": entries}
+    return {
+        "entries": entries,
+        "last_line": all_matched[-1] if all_matched else since_line,
+    }
 
 
 def cmd_read_ufw_log(params: dict[str, Any]) -> dict[str, Any]:
-    """Return recent ufw.log lines for blocked connections."""
+    """Return recent ufw.log lines for blocked connections.
+
+    Supports an optional `since_line` watermark (see cmd_read_auth_log).
+    """
     max_lines = max(1, min(int(params.get("max_lines", 1000)), 5000))
+    since_line = params.get("since_line", "") or ""
 
     def is_block(line: str) -> bool:
         return _UFW_BLOCK_MARKER in line
 
-    raw_lines = _tail_matching_lines(UFW_LOG_PATH, is_block, max_lines)
+    all_matched = _tail_matching_lines(UFW_LOG_PATH, is_block, max_lines)
+    new_lines = _apply_marker(all_matched, since_line)
     entries = []
-    for line in raw_lines:
+    for line in new_lines:
         m_ip = _UFW_SRC_RE.search(line)
         if not m_ip:
             continue
@@ -754,7 +797,10 @@ def cmd_read_ufw_log(params: dict[str, Any]) -> dict[str, Any]:
             "dport": int(m_dpt.group(1)) if m_dpt else None,
             "proto": m_proto.group(1) if m_proto else None,
         })
-    return {"entries": entries}
+    return {
+        "entries": entries,
+        "last_line": all_matched[-1] if all_matched else since_line,
+    }
 
 
 # ============== IP Ban Commands ==============
