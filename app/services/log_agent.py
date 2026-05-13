@@ -22,7 +22,7 @@ from sqlalchemy import select, update
 from app.api.logs import SETTING_BAN_ALLOWLIST, is_allowlisted, _parse_allowlist
 from app.config import get_settings
 from app.core.permissions import PrivilegedHelperError, get_helper_client
-from app.database import AppSetting, BanSuggestion, LogAgentRun, async_session
+from app.database import AppSetting, AuditLog, BanSuggestion, LogAgentRun, async_session
 from app.services.llm_client import IPSummary, Suggestion, TokenUsage, triage_ips
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,10 @@ SETTING_AGENT_ENABLED = "log_agent_enabled"
 SETTING_AGENT_INTERVAL_MIN = "log_agent_interval_min"
 SETTING_AGENT_DAILY_COST_USD = "log_agent_daily_cost_usd"
 SETTING_AGENT_DAILY_COST_DATE = "log_agent_daily_cost_date"
+SETTING_AGENT_AUTO_BAN_ENABLED = "log_agent_auto_ban_enabled"
+SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE = "log_agent_auto_ban_min_confidence"
+
+DEFAULT_AUTO_BAN_MIN_CONFIDENCE = 80
 
 # Per-source watermark keys — store the last log line we processed so the
 # next run picks up only what's new.
@@ -81,6 +85,21 @@ async def _interval_min(db) -> int:
         return max(1, int(raw))
     except ValueError:
         return DEFAULT_INTERVAL_MIN
+
+
+async def _is_auto_ban_enabled(db) -> bool:
+    raw = await _get_setting(db, SETTING_AGENT_AUTO_BAN_ENABLED, "false")
+    return raw.lower() in ("1", "true", "yes")
+
+
+async def _auto_ban_min_confidence(db) -> int:
+    raw = await _get_setting(
+        db, SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE, str(DEFAULT_AUTO_BAN_MIN_CONFIDENCE)
+    )
+    try:
+        return max(0, min(100, int(raw)))
+    except ValueError:
+        return DEFAULT_AUTO_BAN_MIN_CONFIDENCE
 
 
 async def _today_cost(db) -> float:
@@ -345,7 +364,11 @@ async def run_once(force: bool = False) -> LogAgentRun:
 
     # Persist suggestions + run record + cost
     inserted = 0
+    auto_approved = 0
     async with async_session() as db:
+        auto_ban_enabled = await _is_auto_ban_enabled(db)
+        auto_ban_threshold = await _auto_ban_min_confidence(db)
+
         for s in suggestions:
             if s.action == "ignore":
                 # Record the LLM's "ignore" decision so we don't keep
@@ -365,15 +388,50 @@ async def run_once(force: bool = False) -> LogAgentRun:
                 continue
             if await _has_pending_suggestion(db, s.target):
                 continue
-            db.add(BanSuggestion(
+
+            applied = False
+            if (
+                auto_ban_enabled
+                and s.action == "ban"
+                and s.confidence >= auto_ban_threshold
+                and "/" not in s.target
+                and not is_allowlisted(s.target, allowlist)
+            ):
+                try:
+                    await helper.ban_ip(s.target)
+                    applied = True
+                except PrivilegedHelperError as exc:
+                    logger.warning(
+                        "auto-ban failed for %s: %s — leaving as pending",
+                        s.target, exc.message,
+                    )
+
+            sug_row = BanSuggestion(
                 target=s.target,
                 action=s.action,
                 confidence=s.confidence,
                 reason=s.reason,
                 evidence=json.dumps(s.evidence),
+                status="approved" if applied else "pending",
+                reviewed_at=datetime.now(timezone.utc) if applied else None,
                 run_id=run.id,
-            ))
+            )
+            db.add(sug_row)
             inserted += 1
+            if applied:
+                await db.flush()
+                db.add(AuditLog(
+                    user_id=None,
+                    action="auto_approve_suggestion",
+                    resource_type="ban_suggestion",
+                    resource_id=str(sug_row.id),
+                    details=json.dumps({
+                        "target": sug_row.target,
+                        "confidence": sug_row.confidence,
+                        "threshold": auto_ban_threshold,
+                    }),
+                ))
+                auto_approved += 1
 
         row = await db.get(LogAgentRun, run.id)
         row.finished_at = datetime.now(timezone.utc)
@@ -388,8 +446,8 @@ async def run_once(force: bool = False) -> LogAgentRun:
         await db.commit()
         await db.refresh(row)
         logger.info(
-            "Agent run %d done: lines=%d ips=%d suggestions=%d cost=$%.4f",
-            row.id, row.lines_analyzed, len(summaries), inserted, row.cost_usd,
+            "Agent run %d done: lines=%d ips=%d suggestions=%d auto_approved=%d cost=$%.4f",
+            row.id, row.lines_analyzed, len(summaries), inserted, auto_approved, row.cost_usd,
         )
         return row
 

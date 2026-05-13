@@ -36,6 +36,9 @@ from app.database import (
 )
 from app.services import log_agent
 from app.services.log_agent import (
+    DEFAULT_AUTO_BAN_MIN_CONFIDENCE,
+    SETTING_AGENT_AUTO_BAN_ENABLED,
+    SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE,
     SETTING_AGENT_DAILY_COST_DATE,
     SETTING_AGENT_DAILY_COST_USD,
     SETTING_AGENT_ENABLED,
@@ -244,14 +247,22 @@ async def _read_settings(db: AsyncSession) -> dict:
         SETTING_AGENT_INTERVAL_MIN,
         SETTING_AGENT_DAILY_COST_USD,
         SETTING_AGENT_DAILY_COST_DATE,
+        SETTING_AGENT_AUTO_BAN_ENABLED,
+        SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE,
     )
     result = await db.execute(select(AppSetting).where(AppSetting.key.in_(keys)))
     rows = {r.key: r.value for r in result.scalars().all()}
+    try:
+        threshold = int(rows.get(SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE, "") or DEFAULT_AUTO_BAN_MIN_CONFIDENCE)
+    except ValueError:
+        threshold = DEFAULT_AUTO_BAN_MIN_CONFIDENCE
     return {
         "enabled": rows.get(SETTING_AGENT_ENABLED, "false").lower() in ("1", "true", "yes"),
         "interval_min": int(rows.get(SETTING_AGENT_INTERVAL_MIN, "10") or 10),
         "today_cost_usd": float(rows.get(SETTING_AGENT_DAILY_COST_USD, "0") or 0),
         "today_cost_date": rows.get(SETTING_AGENT_DAILY_COST_DATE, ""),
+        "auto_ban_enabled": rows.get(SETTING_AGENT_AUTO_BAN_ENABLED, "false").lower() in ("1", "true", "yes"),
+        "auto_ban_min_confidence": max(0, min(100, threshold)),
     }
 
 
@@ -274,16 +285,23 @@ async def update_agent_settings(
     request: Request,
     enabled: str = Form("false"),
     interval_min: int = Form(10),
+    auto_ban_enabled: str = Form("false"),
+    auto_ban_min_confidence: int = Form(DEFAULT_AUTO_BAN_MIN_CONFIDENCE),
     current_user: AdminUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if interval_min < 1 or interval_min > 1440:
         raise HTTPException(400, "interval_min must be between 1 and 1440")
+    if auto_ban_min_confidence < 0 or auto_ban_min_confidence > 100:
+        raise HTTPException(400, "auto_ban_min_confidence must be between 0 and 100")
     enabled_value = "true" if enabled.lower() in ("1", "true", "yes", "on") else "false"
+    auto_ban_enabled_value = "true" if auto_ban_enabled.lower() in ("1", "true", "yes", "on") else "false"
 
     for key, value in (
         (SETTING_AGENT_ENABLED, enabled_value),
         (SETTING_AGENT_INTERVAL_MIN, str(interval_min)),
+        (SETTING_AGENT_AUTO_BAN_ENABLED, auto_ban_enabled_value),
+        (SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE, str(auto_ban_min_confidence)),
     ):
         row = (await db.execute(select(AppSetting).where(AppSetting.key == key))).scalar_one_or_none()
         if row:

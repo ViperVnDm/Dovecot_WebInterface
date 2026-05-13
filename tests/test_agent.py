@@ -312,6 +312,166 @@ async def test_reject_marks_status_without_helper_call(auth_client, db_engine):
         assert row.status == "rejected"
 
 
+# ── Auto-approval of high-confidence bans ────────────────────────────────────
+
+
+async def _run_with_single_suggestion(
+    db_engine, mock_helper, suggestion: Suggestion, *,
+    settings_to_seed=None, log_entry_ip: str | None = None,
+):
+    """Helper: run the agent once with a single LLM suggestion injected.
+
+    `log_entry_ip` can differ from `suggestion.target` to simulate the case
+    where the prefilter passes IP X but the LLM responds about IP Y — useful
+    for testing the auto-approval allowlist re-check independently of the
+    prefilter's own allowlist drop.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+
+    if settings_to_seed:
+        async with factory() as db:
+            for key, value in settings_to_seed.items():
+                db.add(AppSetting(key=key, value=value))
+            await db.commit()
+
+    async def fake_triage(grouped):
+        return [suggestion], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+
+    ip = log_entry_ip or suggestion.target
+    mock_helper.read_logs_with_marker.return_value = (
+        [
+            {"ips": [ip], "message": "Failed login", "service": "postfix"},
+            {"ips": [ip], "message": "Failed login", "service": "postfix"},
+            {"ips": [ip], "message": "Failed login", "service": "postfix"},
+        ],
+        "tail-marker",
+    )
+    mock_helper.list_banned_ips.return_value = []
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        run = await log_agent.run_once(force=True)
+    return run, factory
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_applies_high_confidence_ban(auth_client, db_engine):
+    """Enabled + confidence >= threshold → helper.ban_ip called and status=approved."""
+    sug = Suggestion(target="6.6.6.6", action="ban", confidence=90, reason="brute-force")
+    ac, mock_helper = auth_client
+    run, factory = await _run_with_single_suggestion(
+        db_engine,
+        mock_helper,
+        sug,
+        settings_to_seed={
+            log_agent.SETTING_AGENT_AUTO_BAN_ENABLED: "true",
+            log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE: "80",
+        },
+    )
+
+    mock_helper.ban_ip.assert_awaited_with("6.6.6.6")
+    assert run.suggestions_created == 1
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.target == "6.6.6.6")
+        )).scalar_one()
+        assert row.status == "approved"
+        assert row.reviewed_by is None
+        assert row.reviewed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_skips_low_confidence(auth_client, db_engine):
+    """Confidence below the threshold leaves the suggestion pending."""
+    sug = Suggestion(target="7.7.7.7", action="ban", confidence=75, reason="maybe")
+    ac, mock_helper = auth_client
+    run, factory = await _run_with_single_suggestion(
+        db_engine,
+        mock_helper,
+        sug,
+        settings_to_seed={
+            log_agent.SETTING_AGENT_AUTO_BAN_ENABLED: "true",
+            log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE: "80",
+        },
+    )
+
+    mock_helper.ban_ip.assert_not_awaited()
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.target == "7.7.7.7")
+        )).scalar_one()
+        assert row.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_never_bans_allowlisted_target(auth_client, db_engine):
+    """Defense-in-depth: even if confidence clears the threshold, allowlisted IPs are never auto-banned."""
+    from app.api.logs import SETTING_BAN_ALLOWLIST
+    sug = Suggestion(target="64.233.160.99", action="ban", confidence=95, reason="false-positive")
+    ac, mock_helper = auth_client
+    # Log entries come from a non-allowlisted IP so the prefilter passes
+    # something to the LLM; the mocked LLM then "responds" about the
+    # allowlisted target — exercising the auto-approval re-check.
+    run, factory = await _run_with_single_suggestion(
+        db_engine,
+        mock_helper,
+        sug,
+        log_entry_ip="1.2.3.4",
+        settings_to_seed={
+            log_agent.SETTING_AGENT_AUTO_BAN_ENABLED: "true",
+            log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE: "80",
+            SETTING_BAN_ALLOWLIST: "64.233.160.0/19",
+        },
+    )
+
+    mock_helper.ban_ip.assert_not_awaited()
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.target == "64.233.160.99")
+        )).scalar_one()
+        assert row.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_disabled_by_default(auth_client, db_engine):
+    """No auto-ban settings present → all suggestions remain pending."""
+    sug = Suggestion(target="8.8.8.8", action="ban", confidence=99, reason="obvious")
+    ac, mock_helper = auth_client
+    run, factory = await _run_with_single_suggestion(db_engine, mock_helper, sug)
+
+    mock_helper.ban_ip.assert_not_awaited()
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.target == "8.8.8.8")
+        )).scalar_one()
+        assert row.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_does_not_apply_to_allowlist_action(auth_client, db_engine):
+    """Auto-approve only applies to ban actions; allowlist suggestions still need a human."""
+    sug = Suggestion(target="35.0.0.5", action="allowlist", confidence=95, reason="google")
+    ac, mock_helper = auth_client
+    run, factory = await _run_with_single_suggestion(
+        db_engine,
+        mock_helper,
+        sug,
+        settings_to_seed={
+            log_agent.SETTING_AGENT_AUTO_BAN_ENABLED: "true",
+            log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE: "80",
+        },
+    )
+
+    mock_helper.ban_ip.assert_not_awaited()
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(BanSuggestion.target == "35.0.0.5")
+        )).scalar_one()
+        assert row.status == "pending"
+
+
 # ── Suggestion expiry ────────────────────────────────────────────────────────
 
 
