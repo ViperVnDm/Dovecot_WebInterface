@@ -43,9 +43,13 @@ ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin
 # Network — Unix socket only, no network sockets needed
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 
-# System call filter — block exotic syscalls that the helper should never use
+# System call filter — block exotic syscalls that the helper should never use.
+# Note: we can't use ~@privileged because in systemd 250+ it includes @chown,
+# which the helper legitimately needs at startup to set group ownership on
+# /run/dovecot-webadmin/helper.sock so www-data can connect. Instead we list
+# the dangerous subgroups individually.
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete @raw-io
+SystemCallFilter=~@clock @module @reboot @swap @raw-io @mount @debug @cpu-emulation @obsolete @resources
 SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 
