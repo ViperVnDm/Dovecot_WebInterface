@@ -127,6 +127,10 @@ chmod 600 "$INSTALL_DIR/.env"
 # Privileged helper needs root ownership
 chown root:root "$INSTALL_DIR/privileged" -R
 
+# Keep .git owned by root so future `sudo git pull` works without tripping
+# git's "dubious ownership" safety check (CVE-2022-24765).
+chown -R root:root "$INSTALL_DIR/.git"
+
 # Install systemd services
 echo_info "Installing systemd services..."
 cp "$INSTALL_DIR/systemd/dovecot-webadmin.service" /etc/systemd/system/

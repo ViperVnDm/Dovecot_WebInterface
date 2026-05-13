@@ -96,9 +96,11 @@ main() {
     fi
 
     # File ownership: git pull writes as root (since we run as root). Reset
-    # ownership so the web service can read its own files.
+    # the working tree to www-data so the web service can read its own files,
+    # then restore root ownership on .git/ and privileged/.
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chown -R root:root "$INSTALL_DIR/privileged"
+    chown -R root:root "$INSTALL_DIR/.git"
     chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
     chmod 750 "$INSTALL_DIR/update.sh"
 
