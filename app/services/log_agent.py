@@ -332,8 +332,22 @@ async def run_once(force: bool = False) -> LogAgentRun:
 
     helper = get_helper_client()
 
-    # Gather + pre-filter
-    raw_entries = await _gather_log_entries()
+    # Gather + pre-filter. If the helper can't be reached (socket perms,
+    # service down, etc.) we record the failure on the run row instead of
+    # letting the exception propagate — otherwise finished_at never gets
+    # set and the UI shows the run as "running" forever.
+    try:
+        raw_entries = await _gather_log_entries()
+    except Exception as exc:
+        logger.exception("log gathering failed")
+        async with async_session() as db:
+            row = await db.get(LogAgentRun, run.id)
+            row.finished_at = datetime.now(timezone.utc)
+            row.error = f"log gathering failed: {type(exc).__name__}: {exc}"
+            await db.commit()
+            await db.refresh(row)
+            return row
+
     async with async_session() as db:
         allowlist_raw = await _get_setting(db, SETTING_BAN_ALLOWLIST, "") or ""
         allowlist = _parse_allowlist(allowlist_raw)

@@ -5,7 +5,12 @@ After=network.target
 [Service]
 Type=exec
 User=root
-Group=root
+# Group=www-data so systemd creates /run/dovecot-webadmin/ as root:www-data
+# (with RuntimeDirectoryMode=0750), allowing the web app — which runs as
+# www-data with no supplementary groups — to traverse into the dir and
+# reach the helper socket. The process still has EUID=0 so all privileged
+# subprocesses (useradd, chpasswd, ufw, ...) work normally.
+Group=www-data
 WorkingDirectory=/opt/dovecot-webadmin
 Environment="PATH=/opt/dovecot-webadmin/venv/bin"
 EnvironmentFile=-/opt/dovecot-webadmin/.env
