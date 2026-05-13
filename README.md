@@ -67,7 +67,8 @@ Dovecot_WebInterface/
 │   ├── dovecot-webadmin.service         # Web app service (www-data)
 │   └── dovecot-webadmin-helper.service  # Helper daemon service (root)
 ├── manage.py                # CLI: init-db, create-admin, change-password
-├── setup.sh                 # Production installation script
+├── setup.sh                 # Production installation script (git-clone-in-place)
+├── update.sh                # In-place update: git pull + conditional pip/systemd + restart
 ├── requirements.txt
 ├── pyproject.toml           # pytest configuration
 └── .env.example             # Configuration template
@@ -92,11 +93,14 @@ sudo ./setup.sh
 ```
 
 The script will:
-- Copy files to `/opt/dovecot-webadmin/`
+- `git clone` the repo into `/opt/dovecot-webadmin/` (so updates are a simple `git pull`)
 - Create a Python virtualenv and install dependencies
 - Generate a random `SECRET_KEY`
 - Install and start both systemd services
+- Install the `dovecot-webadmin-update` helper at `/usr/local/sbin/`
 - Prompt for an initial admin username and password
+
+The `/tmp/dovecot-webadmin-src` checkout is only used to invoke the installer — you can delete it afterwards. The live install lives at `/opt/dovecot-webadmin/`.
 
 ### 2. Configure `.env`
 
@@ -138,10 +142,40 @@ server {
 ### 4. Deploy updates
 
 ```bash
-cd /tmp/dovecot-webadmin-src
-sudo cp -r app privileged /opt/dovecot-webadmin/
-sudo systemctl restart dovecot-webadmin dovecot-webadmin-helper
+sudo dovecot-webadmin-update
 ```
+
+That's it. The script:
+- Refuses to run if `/opt/dovecot-webadmin/` has uncommitted local edits
+- `git pull --ff-only` from the same branch you installed
+- Re-runs `pip install` **only** when `requirements.txt` changed
+- Refreshes `/etc/systemd/system/*.service` and reloads systemd **only** when the unit files changed
+- Restarts both services and tails recent log entries
+
+No-op updates (already at the latest commit) exit immediately. Equivalent direct invocation: `sudo /opt/dovecot-webadmin/update.sh`.
+
+### Migrating an existing copy-based install
+
+If you installed before `setup.sh` switched to clone-in-place, `/opt/dovecot-webadmin/` won't be a git checkout and `dovecot-webadmin-update` will refuse to run. One-time migration:
+
+```bash
+# Back up data + config
+sudo cp /opt/dovecot-webadmin/.env /tmp/dwa.env.bak
+sudo cp -r /opt/dovecot-webadmin/data /tmp/dwa-data.bak
+
+# Stop services and remove the old install
+sudo systemctl stop dovecot-webadmin dovecot-webadmin-helper
+sudo rm -rf /opt/dovecot-webadmin
+
+# Re-install (will git-clone this time) and restore data
+sudo /tmp/dovecot-webadmin-src/setup.sh
+sudo cp /tmp/dwa.env.bak /opt/dovecot-webadmin/.env
+sudo cp -r /tmp/dwa-data.bak/* /opt/dovecot-webadmin/data/
+sudo chown -R www-data:www-data /opt/dovecot-webadmin/data /opt/dovecot-webadmin/.env
+sudo systemctl restart dovecot-webadmin-helper dovecot-webadmin
+```
+
+When `setup.sh` prompts for a new admin user during the re-install, pick any value — the restored `data/admin.db` will overwrite that account immediately afterwards.
 
 ## Configuration Reference
 

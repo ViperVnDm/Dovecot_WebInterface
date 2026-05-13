@@ -76,10 +76,15 @@ pytest tests/ -v
 Tests run fully offline — in-memory SQLite, mocked helper. `test_helper_logic.py` is skipped on Windows (uses Unix `grp`/`pwd` modules).
 
 ### Deploying to server
+The live install at `/opt/dovecot-webadmin/` is a git clone (set up by `setup.sh`). Updates are one command:
+
 ```bash
-sudo cp -r app privileged /opt/dovecot-webadmin/
-sudo systemctl restart dovecot-webadmin dovecot-webadmin-helper
+sudo dovecot-webadmin-update
 ```
+
+`update.sh` pulls from the same branch installed, conditionally re-runs `pip install` if `requirements.txt` changed, re-copies systemd unit files and `daemon-reload`s them if they changed, then restarts both services. It refuses to run if `/opt/dovecot-webadmin/` is dirty (local edits) — that prevents silent loss of hand-patched files.
+
+If `/opt/dovecot-webadmin/` is a legacy copy-based install (no `.git`), `update.sh` exits with migration instructions — see README.md → "Migrating an existing copy-based install".
 
 ## Test Fixture Notes
 
