@@ -103,6 +103,11 @@ def run_command(cmd: list[str], input_data: str | None = None) -> tuple[str, str
             input=input_data,
             env=env,
         )
+        if result.returncode != 0:
+            logger.warning(
+                f"Command failed (rc={result.returncode}): {' '.join(cmd)} | "
+                f"stderr: {result.stderr.strip()}"
+            )
         return result.stdout, result.stderr, result.returncode
     except subprocess.TimeoutExpired:
         raise CommandError("Command timed out", 500)

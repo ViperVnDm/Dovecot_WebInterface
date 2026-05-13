@@ -40,10 +40,15 @@ RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 
-# Filesystem — read-only system, with explicit writable paths
-ProtectSystem=strict
+# Filesystem — /usr, /boot, /efi read-only (the helper never writes there
+# anyway), but /etc is writable because the helper has to update
+# /etc/passwd, /etc/shadow, /etc/ufw/user.rules etc. via useradd / chpasswd
+# / ufw. ProtectSystem=strict (which makes /etc read-only too) breaks every
+# command that does system administration. ReadWritePaths adds the few
+# extra writable dirs ufw and postfix need.
+ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin
+ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin /var/lib/ufw
 
 # Network — Unix socket only, no network sockets needed
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
