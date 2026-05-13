@@ -48,7 +48,7 @@ MemoryDenyWriteExecute=true
 # extra writable dirs ufw and postfix need.
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin /var/lib/ufw
+ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin -/var/lib/ufw
 
 # Network — Unix socket only, no network sockets needed
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
