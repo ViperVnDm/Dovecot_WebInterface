@@ -50,8 +50,13 @@ ProtectSystem=true
 ProtectHome=read-only
 ReadWritePaths=/var/log /var/spool/postfix /var/mail /home /run/dovecot-webadmin -/var/lib/ufw
 
-# Network — Unix socket only, no network sockets needed
-RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# Network — the helper itself only uses AF_UNIX, but postqueue (spawned for
+# queue inspection / flush / delete) probes AF_INET/AF_INET6 at startup even
+# when Postfix is configured ipv4-only. Blocking those families makes every
+# postqueue call log "inet_protocols: disabling IPv4 ... Address family not
+# supported by protocol". Allow them so the probe succeeds silently; the
+# helper never opens listening sockets.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 
 # System call filter — block exotic syscalls that the helper should never use.
 # Note: we can't use ~@privileged because in systemd 250+ it includes @chown,
