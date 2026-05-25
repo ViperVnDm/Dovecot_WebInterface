@@ -11,7 +11,10 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlalchemy import select, desc
@@ -176,6 +179,53 @@ async def reject_suggestion(
     suggestion.reviewed_by = current_user.id
     suggestion.reviewed_at = datetime.now(timezone.utc)
     await _audit(db, current_user.id, "reject_suggestion", suggestion)
+    await db.commit()
+    return await list_suggestions(request, current_user=current_user, db=db)
+
+
+@router.post("/suggestions/approve-all-bans")
+async def approve_all_ban_suggestions(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve every pending ban suggestion. Calls helper.ban_ip for each target."""
+    result = await db.execute(
+        select(BanSuggestion).where(
+            BanSuggestion.status == "pending",
+            BanSuggestion.action == "ban",
+        )
+    )
+    pending = result.scalars().all()
+
+    helper = get_helper_client()
+    allowlist = await load_allowlist(db)
+    now = datetime.now(timezone.utc)
+    applied = 0
+    skipped = 0
+
+    for suggestion in pending:
+        target = suggestion.target.strip()
+        if "/" not in target and is_allowlisted(target, allowlist):
+            skipped += 1
+            continue
+        try:
+            await helper.ban_ip(target)
+            suggestion.status = "approved"
+            suggestion.reviewed_by = current_user.id
+            suggestion.reviewed_at = now
+            await _audit(db, current_user.id, "approve_suggestion", suggestion)
+            applied += 1
+        except PrivilegedHelperError as e:
+            logger.warning("approve-all-bans: failed to ban %s: %s", target, e.message)
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="approve_all_ban_suggestions",
+        resource_type="ban_suggestion",
+        resource_id="*",
+        details=json.dumps({"applied": applied, "skipped_allowlisted": skipped}),
+    ))
     await db.commit()
     return await list_suggestions(request, current_user=current_user, db=db)
 

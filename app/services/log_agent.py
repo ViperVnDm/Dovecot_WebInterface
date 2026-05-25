@@ -221,6 +221,26 @@ async def _recently_triaged_targets(db, days: int = IP_COOLDOWN_DAYS) -> set[str
     return {row[0] for row in result.all()}
 
 
+async def _ip_prior_ban_counts(db, ips: set[str]) -> dict[str, int]:
+    """Count historical ban suggestions per IP, excluding currently-pending ones.
+
+    Used to boost confidence for repeat offenders on re-triage.
+    """
+    if not ips:
+        return {}
+    from sqlalchemy import func
+    result = await db.execute(
+        select(BanSuggestion.target, func.count(BanSuggestion.id).label("cnt"))
+        .where(
+            BanSuggestion.target.in_(ips),
+            BanSuggestion.action == "ban",
+            BanSuggestion.status != "pending",
+        )
+        .group_by(BanSuggestion.target)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def _expire_old_suggestions(db) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=SUGGESTION_EXPIRY_DAYS)
     result = await db.execute(
@@ -365,6 +385,14 @@ async def run_once(force: bool = False) -> LogAgentRun:
         recent_targets=recent_targets,
     )
 
+    # Enrich summaries with prior-history counts so the LLM has the context
+    # and so we can apply a post-LLM confidence boost for repeat offenders.
+    if summaries:
+        async with async_session() as db:
+            prior_counts = await _ip_prior_ban_counts(db, {s.ip for s in summaries})
+        for s in summaries:
+            s.prior_ban_suggestions = prior_counts.get(s.ip, 0)
+
     suggestions: list[Suggestion] = []
     usage = TokenUsage()
     model = settings.log_agent_model
@@ -375,6 +403,19 @@ async def run_once(force: bool = False) -> LogAgentRun:
         except Exception as exc:  # network / SDK / parse errors
             logger.exception("triage_ips failed")
             error = f"{type(exc).__name__}: {exc}"
+
+    # Boost confidence for repeat offenders: +10% per prior ban suggestion,
+    # capped at 95. Annotate the evidence so the admin can see why.
+    prior_by_ip = {s.ip: s.prior_ban_suggestions for s in summaries}
+    for s in suggestions:
+        prior = prior_by_ip.get(s.target, 0)
+        if prior > 0 and s.action == "ban":
+            boost = min(95 - s.confidence, prior * 10)
+            if boost > 0:
+                s.confidence = s.confidence + boost
+                s.evidence = [
+                    f"Previously flagged {prior} time(s) — confidence boosted by +{boost}%"
+                ] + s.evidence
 
     # Persist suggestions + run record + cost
     inserted = 0

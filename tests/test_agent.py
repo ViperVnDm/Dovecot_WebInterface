@@ -498,6 +498,134 @@ async def test_old_pending_suggestions_get_expired(auth_client, db_engine):
         assert (await db.get(BanSuggestion, fresh_id)).status == "pending"
 
 
+# ── History-based confidence boost ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_confidence_boosted_for_repeat_offender(auth_client, db_engine):
+    """IP with 2 prior expired suggestions gets +20% confidence boost."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    # Seed 2 prior expired ban suggestions for the attacker IP.
+    async with factory() as db:
+        for _ in range(2):
+            s = BanSuggestion(
+                target="5.5.5.5", action="ban", confidence=70, reason="prior",
+                status="expired",
+            )
+            s.created_at = datetime.now(timezone.utc) - timedelta(days=30)
+            db.add(s)
+        await db.commit()
+
+    mock_helper.read_logs_with_marker.return_value = (
+        [{"ips": ["5.5.5.5"], "message": "SSH brute", "service": "postfix"}] * 3,
+        "marker",
+    )
+    mock_helper.list_banned_ips.return_value = []
+
+    captured: list = []
+
+    async def fake_triage(grouped):
+        captured.extend(grouped)
+        sug = Suggestion(target="5.5.5.5", action="ban", confidence=70, reason="ssh brute")
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        await log_agent.run_once(force=True)
+
+    # IPSummary sent to LLM should carry prior_ban_suggestions=2.
+    assert len(captured) == 1
+    assert captured[0].prior_ban_suggestions == 2
+
+    # Stored suggestion should have boosted confidence (70 + 2*10 = 90).
+    async with factory() as db:
+        rows = (await db.execute(
+            select(BanSuggestion).where(
+                BanSuggestion.target == "5.5.5.5",
+                BanSuggestion.status == "pending",
+            )
+        )).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].confidence == 90
+
+
+@pytest.mark.asyncio
+async def test_confidence_boost_triggers_auto_approve(auth_client, db_engine):
+    """Repeat offender whose boosted confidence clears the threshold is auto-banned."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    # 1 prior expired suggestion → +10% boost → 70+10 = 80 → meets threshold of 80.
+    async with factory() as db:
+        prior = BanSuggestion(
+            target="6.6.6.6", action="ban", confidence=70, reason="prior",
+            status="expired",
+        )
+        prior.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+        db.add(prior)
+        db.add(AppSetting(key=log_agent.SETTING_AGENT_AUTO_BAN_ENABLED, value="true"))
+        db.add(AppSetting(key=log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE, value="80"))
+        await db.commit()
+
+    mock_helper.read_logs_with_marker.return_value = (
+        [{"ips": ["6.6.6.6"], "message": "SSH brute", "service": "postfix"}] * 3,
+        "marker",
+    )
+    mock_helper.list_banned_ips.return_value = []
+
+    async def fake_triage(grouped):
+        sug = Suggestion(target="6.6.6.6", action="ban", confidence=70, reason="ssh brute")
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        await log_agent.run_once(force=True)
+
+    mock_helper.ban_ip.assert_awaited_with("6.6.6.6")
+
+
+# ── Approve-all-bans ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_approve_all_bans_applies_each_and_skips_allowlisted(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.api.logs import SETTING_BAN_ALLOWLIST
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        db.add(AppSetting(key=SETTING_BAN_ALLOWLIST, value="64.233.160.0/19"))
+        ban1 = await _create_pending(db, "10.20.30.40", action="ban")
+        ban2 = await _create_pending(db, "10.20.30.41", action="ban")
+        safe = await _create_pending(db, "64.233.160.5", action="ban")  # allowlisted
+        al = await _create_pending(db, "35.0.0.5", action="allowlist")  # not a ban
+        await db.commit()
+
+    resp = await ac.post("/api/agent/suggestions/approve-all-bans")
+    assert resp.status_code == 200
+
+    mock_helper.ban_ip.assert_any_await("10.20.30.40")
+    mock_helper.ban_ip.assert_any_await("10.20.30.41")
+    # allowlisted IP must never be banned
+    for call in mock_helper.ban_ip.await_args_list:
+        assert call.args[0] != "64.233.160.5"
+
+    async with factory() as db:
+        assert (await db.get(BanSuggestion, ban1)).status == "approved"
+        assert (await db.get(BanSuggestion, ban2)).status == "approved"
+        # allowlisted → still pending (skipped)
+        assert (await db.get(BanSuggestion, safe)).status == "pending"
+        # allowlist-action suggestion → untouched (approve-all-bans only touches ban action)
+        assert (await db.get(BanSuggestion, al)).status == "pending"
+
+
 # ── Settings round-trip ──────────────────────────────────────────────────────
 
 

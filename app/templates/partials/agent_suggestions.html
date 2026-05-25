@@ -2,13 +2,25 @@
 <div class="space-y-3">
     <div class="flex justify-between items-center pb-2 border-b border-gray-100">
         <span class="text-sm text-gray-500">{{ suggestions|length }} pending</span>
-        <button hx-post="/api/agent/suggestions/reject-all"
-                hx-target="#agent-suggestions"
-                hx-swap="innerHTML"
-                hx-confirm="Reject all {{ suggestions|length }} pending suggestions?"
-                class="px-3 py-1 text-xs border border-gray-300 hover:bg-gray-50 rounded-lg text-gray-600">
-            Reject all
-        </button>
+        <div class="flex gap-2">
+            {% set ban_count = suggestions | selectattr("action", "equalto", "ban") | list | length %}
+            {% if ban_count > 0 %}
+            <button hx-post="/api/agent/suggestions/approve-all-bans"
+                    hx-target="#agent-suggestions"
+                    hx-swap="innerHTML"
+                    hx-confirm="Approve and apply all {{ ban_count }} pending ban suggestion(s)? This will block each IP via UFW."
+                    class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+                Approve all bans ({{ ban_count }})
+            </button>
+            {% endif %}
+            <button hx-post="/api/agent/suggestions/reject-all"
+                    hx-target="#agent-suggestions"
+                    hx-swap="innerHTML"
+                    hx-confirm="Reject all {{ suggestions|length }} pending suggestions?"
+                    class="px-3 py-1 text-xs border border-gray-300 hover:bg-gray-50 rounded-lg text-gray-600">
+                Reject all
+            </button>
+        </div>
     </div>
     {% for s in suggestions %}
     <div class="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3">

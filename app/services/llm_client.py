@@ -36,6 +36,7 @@ class IPSummary:
     services_touched: list[str]
     time_range: str
     sample_lines: list[str]
+    prior_ban_suggestions: int = 0
 
 
 @dataclass
@@ -133,8 +134,10 @@ def _format_user_message(grouped: list[IPSummary]) -> str:
             f"- events: {s.total_events}\n"
             f"- services: {', '.join(s.services_touched)}\n"
             f"- time_range: {s.time_range}\n"
-            f"- samples:"
         )
+        if s.prior_ban_suggestions > 0:
+            lines.append(f"- previously flagged: {s.prior_ban_suggestions} time(s) by this agent")
+        lines.append("- samples:")
         # 3 representative lines is enough for triage; more inflates input tokens.
         for ln in s.sample_lines[:3]:
             lines.append(f"    {ln}")
