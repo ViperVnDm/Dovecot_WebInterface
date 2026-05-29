@@ -33,6 +33,7 @@ SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrati
 - Rule types: `storage`, `queue_size`, `deferred_count`
 - Operators: `gt`, `gte`, `lt`, `lte`, `eq`
 - `get_all_settings(db=None)` accepts an optional session — pass a FastAPI-injected session in route handlers so tests can use the in-memory DB override
+- `send_test_email(recipient, db)` sends a test message using the *saved* SMTP settings; exposed via `POST /api/alerts/settings/test` so admins can verify delivery from the Alerts page. The result partial (`partials/alerts_test_result.html`) auto-clears on success after 6s (Alpine `x-init`) but keeps the error (with the SMTP exception text) on screen on failure.
 
 ### Storage History
 `storage_collector_loop()` takes a disk usage snapshot on startup then every hour. `StorageHistory` records are queried last 30 days (one point per calendar day) for the history chart.

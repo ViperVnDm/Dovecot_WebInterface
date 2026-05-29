@@ -1,0 +1,14 @@
+<!-- Test alert send result -->
+{% if success %}
+<div x-data="{ show: true }"
+     x-show="show"
+     x-init="setTimeout(() => show = false, 6000)"
+     x-transition.opacity.duration.500ms
+     class="px-3 py-2 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+    {{ detail }}
+</div>
+{% else %}
+<div class="px-3 py-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+    Test email failed: {{ detail }}
+</div>
+{% endif %}

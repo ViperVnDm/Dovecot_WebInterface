@@ -106,6 +106,48 @@ async def test_alert_settings_update(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_send_test_email_success(auth_client):
+    ac, _ = auth_client
+    # Configure a From address so the test send is allowed
+    await ac.post("/api/alerts/settings", data={
+        "check_interval": "5",
+        "smtp_from": "alerts@nrstuff.com",
+        "smtp_host": "localhost",
+        "smtp_port": "25",
+    })
+
+    from unittest.mock import MagicMock, patch
+    with patch("app.services.alert_checker.smtplib.SMTP") as mock_smtp:
+        mock_smtp.return_value.__enter__.return_value = MagicMock()
+        resp = await ac.post("/api/alerts/settings/test", data={
+            "recipient": "admin@example.com",
+        })
+    assert resp.status_code == 200
+    assert b"admin@example.com" in resp.content
+    assert b"failed" not in resp.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_test_email_no_from_configured(auth_client):
+    ac, _ = auth_client
+    # No smtp_from saved -> should report failure, not raise
+    resp = await ac.post("/api/alerts/settings/test", data={
+        "recipient": "admin@example.com",
+    })
+    assert resp.status_code == 200
+    assert b"failed" in resp.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_test_email_invalid_recipient(auth_client):
+    ac, _ = auth_client
+    resp = await ac.post("/api/alerts/settings/test", data={
+        "recipient": "not-an-email",
+    })
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_alert_history_empty_initially(auth_client):
     ac, _ = auth_client
     resp = await ac.get("/partials/alerts/history")

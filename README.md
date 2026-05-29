@@ -10,7 +10,7 @@ A web-based administration interface for Dovecot/Postfix mail servers. Built wit
 - **IP Ban List** — Block IPs via UFW from the web UI; maintain a never-ban allowlist (supports CIDR ranges)
 - **Storage Monitoring** — Disk usage overview, per-user mailbox sizes, 30-day usage history graph
 - **Alerts** — Configurable threshold rules (storage, queue size, deferred count) with email and webhook notifications, cooldown enforcement, trigger history
-- **Alert Settings** — Configure SMTP sender, host, port, and check interval from the web UI
+- **Alert Settings** — Configure SMTP sender, host, port, and check interval from the web UI, with a "Send Test Email" button to verify delivery
 
 ## Architecture
 

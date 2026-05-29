@@ -12,6 +12,7 @@ from app.core.security import get_current_user
 from app.database import get_db, AdminUser, AlertRule, AppSetting
 from app.services.alert_checker import (
     get_all_settings,
+    send_test_email,
     SETTING_CHECK_INTERVAL,
     SETTING_SMTP_FROM,
     SETTING_SMTP_HOST,
@@ -257,4 +258,21 @@ async def update_alert_settings(
             "smtp_port": smtp_port,
             "saved": True,
         },
+    )
+
+
+@router.post("/settings/test")
+async def send_test_alert(
+    request: Request,
+    recipient: str = Form(...),
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a test alert email to verify SMTP settings, using the saved config."""
+    recipient = _validate_email_target(recipient)
+    success, detail = await send_test_email(recipient, db)
+    return templates.TemplateResponse(
+        request,
+        "partials/alerts_test_result.html",
+        {"success": success, "detail": detail},
     )

@@ -143,6 +143,38 @@ def _send_webhook(rule: AlertRule, current_value: float, message: str) -> bool:
         return False
 
 
+async def send_test_email(recipient: str, db=None) -> tuple[bool, str]:
+    """Send a test alert email using the currently saved SMTP settings.
+
+    Returns (success, detail). On failure, detail is the error message.
+    """
+    cfg = await get_all_settings(db)
+    smtp_from = cfg["smtp_from"]
+    if not smtp_from:
+        return False, "From Address is not configured. Save a From Address first."
+    try:
+        body = (
+            "This is a test alert from your Mail Server Admin console.\n\n"
+            "If you received this message, email notifications are configured correctly.\n\n"
+            f"SMTP host : {cfg['smtp_host']}:{cfg['smtp_port']}\n"
+            f"From      : {smtp_from}\n"
+            f"Sent at   : {datetime.now(timezone.utc).isoformat()}\n"
+        )
+        msg = MIMEText(body)
+        msg["Subject"] = "[Mail Admin] Test alert"
+        msg["From"] = smtp_from
+        msg["To"] = recipient
+
+        with smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=10) as smtp:
+            smtp.sendmail(smtp_from, [recipient], msg.as_string())
+
+        logger.info(f"Test alert email sent to {recipient}")
+        return True, f"Test email sent to {recipient}."
+    except Exception as e:
+        logger.error(f"Failed to send test alert email to {recipient}: {e}")
+        return False, str(e)
+
+
 async def _notify(rule: AlertRule, current_value: float, message: str) -> bool:
     if rule.notification_type == "email":
         return await _send_email(rule, current_value, message)
