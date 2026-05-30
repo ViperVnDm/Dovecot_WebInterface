@@ -118,6 +118,7 @@ async def client(db_engine):
     with patch("app.main.alert_checker_loop", side_effect=_noop), \
          patch("app.main.storage_collector_loop", side_effect=_noop), \
          patch("app.main.agent_loop", side_effect=_noop), \
+         patch("app.main.cleanup_expired_sessions_loop", side_effect=_noop), \
          patch("app.core.permissions.get_helper_client", return_value=mock_helper), \
          patch("app.api.logs.get_helper_client", return_value=mock_helper), \
          patch("app.api.partials.get_helper_client", return_value=mock_helper), \

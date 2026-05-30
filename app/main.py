@@ -18,7 +18,7 @@ from app.services.log_agent import agent_loop
 
 # Import routers
 from app.api import auth, users, queue, logs, storage, partials, alerts, agent
-from app.core.security import get_current_user
+from app.core.security import get_current_user, cleanup_expired_sessions_loop
 from app.core.limiter import limiter
 from app.core.middleware import (
     CSRFMiddleware,
@@ -37,11 +37,13 @@ async def lifespan(app: FastAPI):
     checker_task = asyncio.create_task(alert_checker_loop())
     storage_task = asyncio.create_task(storage_collector_loop())
     agent_task = asyncio.create_task(agent_loop())
+    cleanup_task = asyncio.create_task(cleanup_expired_sessions_loop())
     yield
     checker_task.cancel()
     storage_task.cancel()
     agent_task.cancel()
-    for task in (checker_task, storage_task, agent_task):
+    cleanup_task.cancel()
+    for task in (checker_task, storage_task, agent_task, cleanup_task):
         try:
             await task
         except asyncio.CancelledError:

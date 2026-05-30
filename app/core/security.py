@@ -1,5 +1,7 @@
 """Authentication and security utilities."""
 
+import asyncio
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -9,8 +11,9 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db, AdminUser, Session
+from app.database import get_db, AdminUser, Session, async_session
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Password hashing
@@ -98,6 +101,22 @@ async def cleanup_expired_sessions(db: AsyncSession) -> int:
     )
     await db.commit()
     return result.rowcount
+
+
+async def cleanup_expired_sessions_loop(interval_seconds: int = 3600) -> None:
+    """Background task: periodically purge expired sessions so the table does
+    not grow without bound. Expired sessions are already rejected by
+    validate_session; this just reclaims the rows."""
+    logger.info("Session cleanup background task started")
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            async with async_session() as db:
+                deleted = await cleanup_expired_sessions(db)
+            if deleted:
+                logger.info("Purged %d expired session(s)", deleted)
+        except Exception:
+            logger.exception("Session cleanup failed")
 
 
 async def get_current_user(

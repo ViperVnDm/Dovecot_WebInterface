@@ -32,9 +32,9 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 
 ### Current status
 - **Phase A ✅ COMPLETE. Phase B in progress.**
-- **Last completed:** Step 3 — reverse-proxy client IP (`--proxy-headers`).
-- **Next up:** Step 4 — purge expired sessions.
-- **Last save point commit:** `plan(step3): trust reverse proxy for client IP`.
+- **Last completed:** Step 4 — expired-session purge loop.
+- **Next up:** Step 5 — complete + view the audit log (last of Phase B).
+- **Last save point commit:** `plan(step4): purge expired sessions hourly`.
 
 ---
 
@@ -74,7 +74,7 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Acceptance: behind nginx, `Session.ip_address` shows the real client IP; rate limit is
     per-IP. (Manual verify — note it in the commit; no unit test.)
 
-- [ ] **Step 4 — Purge expired sessions (#4)**
+- [x] **Step 4 — Purge expired sessions (#4)** ✅ _(done this session)_ — hourly `cleanup_expired_sessions_loop`
   - Files: `app/services/alert_checker.py` or a small periodic task; `tests/test_auth.py`
   - Change: call `cleanup_expired_sessions()` on a timer (e.g. once/hour piggybacked on an
     existing loop) and/or opportunistically on login.
