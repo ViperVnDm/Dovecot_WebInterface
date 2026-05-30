@@ -5,7 +5,7 @@
 <div class="space-y-6">
     <!-- Page header -->
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 class="text-2xl font-bold text-gray-900">Alert Configuration</h1>
+        <h1 class="text-2xl font-bold text-gray-900">Alerts</h1>
         <button onclick="document.getElementById('create-alert-modal').classList.remove('hidden')"
                 class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors
                        flex items-center">
@@ -182,7 +182,8 @@
 </div>
 <!-- Edit Alert Modal -->
 <div id="edit-alert-modal"
-     class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+     class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+     @keydown.escape.window="document.getElementById('edit-alert-modal').classList.add('hidden')">
     <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
         <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
             <h3 class="text-lg font-semibold text-gray-900">Edit Alert Rule</h3>
@@ -290,12 +291,5 @@ function openEditRule(row) {
 
     document.getElementById('edit-alert-modal').classList.remove('hidden');
 }
-
-// Close modal on Escape
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        document.getElementById('edit-alert-modal').classList.add('hidden');
-    }
-});
 </script>
 {% endblock %}

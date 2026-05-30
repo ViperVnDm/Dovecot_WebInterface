@@ -150,7 +150,7 @@ async def logs_page(
     return templates.TemplateResponse(
         request,
         "logs/index.html",
-        {"title": "Mail Logs", "current_user": current_user},
+        {"title": "Logs & Stats", "current_user": current_user},
     )
 
 

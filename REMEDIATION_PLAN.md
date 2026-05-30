@@ -34,9 +34,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 - **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
   is the one change not browser-verified here (trivially reverted: one body attribute).
-- **Last completed:** Step 11 — `collapsible_card` macro on Alerts + Agent settings.
-- **Next up:** Step 12 — one name per page.
-- **Last save point commit:** `plan(step11): reusable collapsible-card macro`.
+- **Phase D ✅ COMPLETE. Phase E next.**
+- **Last completed:** Steps 12 + 13 — page-name consistency + unified modal escape.
+- **Next up:** Step 14 — remove dead API stubs (Phase E).
+- **Last save point commit:** `plan(step12-13): consistent page names + modal escape`.
 
 ---
 
@@ -139,13 +140,15 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
     old double-`border-b` bug. Acceptance: ✅ both pages render (smoke test).
   - Follow-up: other static section cards can adopt the macro later — low priority.
 
-- [ ] **Step 12 — One name per page (#12)**
-  - Files: route `title=` in `app/main.py`, page `<h1>`s, sidebar labels
-  - Acceptance: sidebar label == browser tab title == H1 for every page.
+- [x] **Step 12 — One name per page (#12)** ✅ _(done this session)_
+  - Fixed: Logs (title→"Logs & Stats"), Storage (H1→"Storage"), Alerts (H1→"Alerts"),
+    Agent (H1→"Log Agent"). Sidebar = tab title = H1 for all 8 pages now.
 
-- [ ] **Step 13 — Unify modals (#13)**
-  - Files: user/alert/queue templates — single Alpine (or `<dialog>`) modal pattern; add focus trap.
-  - Acceptance: all modals open/close/escape identically; no stray global keydown listeners.
+- [x] **Step 13 — Unify modals (#13)** ✅ _(done this session)_
+  - The Alerts edit-modal used a stray global `keydown` listener; switched it to the Alpine
+    `@keydown.escape.window` pattern the other modals use and removed the global listener.
+  - Scoped down: a full `<dialog>`/focus-trap rewrite was deliberately NOT done (risky without
+    a browser, and it'd add an Alpine focus-plugin dependency). Escape/close are consistent now.
 
 ---
 
