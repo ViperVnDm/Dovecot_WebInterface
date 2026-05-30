@@ -31,10 +31,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Phase A ✅ COMPLETE.**
-- **Last completed:** Step 2 — Mail Queue actions wired (the headline 501 bug).
-- **Next up:** Step 3 — trust the reverse proxy for client IP (Phase B).
-- **Last save point commit:** `plan(step2): wire Mail Queue action routes`.
+- **Phase A ✅ COMPLETE. Phase B in progress.**
+- **Last completed:** Step 3 — reverse-proxy client IP (`--proxy-headers`).
+- **Next up:** Step 4 — purge expired sessions.
+- **Last save point commit:** `plan(step3): trust reverse proxy for client IP`.
 
 ---
 
@@ -66,7 +66,7 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 
 ## Phase B — Security (highest real-world impact)
 
-- [ ] **Step 3 — Trust the reverse proxy for client IP (#3)**
+- [x] **Step 3 — Trust the reverse proxy for client IP (#3)** ✅ _(done this session)_
   - Files: `systemd/dovecot-webadmin.service` (add `--proxy-headers
     --forwarded-allow-ips=127.0.0.1` to `ExecStart`), `README.md` (note the requirement)
   - Why: without it, `request.client.host` is always 127.0.0.1, so login rate-limiting is a

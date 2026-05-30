@@ -139,6 +139,14 @@ server {
 }
 ```
 
+> **Client IP behind the proxy:** the systemd unit launches uvicorn with
+> `--proxy-headers --forwarded-allow-ips=127.0.0.1`, so it trusts the
+> `X-Forwarded-For` set above **only** from the local nginx. This is what makes
+> the real client IP available to the app — without it, login rate-limiting
+> degrades to a single global bucket and session IPs are logged as `127.0.0.1`.
+> If your proxy runs on a different host, set `--forwarded-allow-ips` to that
+> host's address (never `*`).
+
 ### 4. Deploy updates
 
 ```bash

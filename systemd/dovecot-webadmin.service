@@ -10,7 +10,12 @@ Group=www-data
 WorkingDirectory=/opt/dovecot-webadmin
 Environment="PATH=/opt/dovecot-webadmin/venv/bin"
 EnvironmentFile=-/opt/dovecot-webadmin/.env
-ExecStart=/opt/dovecot-webadmin/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+# --proxy-headers + --forwarded-allow-ips makes uvicorn trust X-Forwarded-For
+# ONLY from the local nginx (127.0.0.1), so request.client.host is the real
+# client IP. Without it every request looks like 127.0.0.1, which collapses
+# the per-IP login rate limit into one global bucket and logs loopback as the
+# session IP. Keep the allow-list at 127.0.0.1 — never widen it to '*'.
+ExecStart=/opt/dovecot-webadmin/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=5
 
