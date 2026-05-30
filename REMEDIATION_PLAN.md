@@ -31,9 +31,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Last completed:** Step 1 (implemented in working tree — commit it to lock the save point).
-- **Next up:** Step 2 — wire Mail Queue actions.
-- **Last save point commit:** _(none yet — run the START commit above)_
+- **Phase A ✅ COMPLETE.**
+- **Last completed:** Step 2 — Mail Queue actions wired (the headline 501 bug).
+- **Next up:** Step 3 — trust the reverse proxy for client IP (Phase B).
+- **Last save point commit:** `plan(step2): wire Mail Queue action routes`.
 
 ---
 
@@ -49,14 +50,17 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Spun out: the question "should auth failures show as warning in the viewer?" → **Step E16**.
   - Acceptance: `.venv/bin/python -m pytest tests/ -q` is **green** (was 2 failing).
 
-- [ ] **Step 2 — Wire Mail Queue actions (#1)** ⚠️ headline bug: the queue page is non-functional
-  - Files: `app/api/queue.py` (replace the `501` stubs), add tests to `tests/test_queue.py` (new)
-  - Change: implement `flush`, `{id}/flush`, `{id}/hold`, `{id}/release`, `DELETE {id}` by
+- [x] **Step 2 — Wire Mail Queue actions (#1)** ✅ _(done this session)_ — was the headline 501 bug
+  - Files: `app/api/queue.py` (replaced the `501` stubs + `_render_queue_table` helper),
+    `tests/conftest.py` (added `app.api.queue.get_helper_client` to the patch list),
+    `tests/test_queue.py` (new, 8 tests)
+  - Change: implemented `flush`, `{id}/flush`, `{id}/hold`, `{id}/release`, `DELETE {id}` by
     calling `get_helper_client()` and returning the refreshed `partials/queue_table.html`,
-    mirroring `app/api/users.py`. Keep `get_current_user` auth on each.
-  - Acceptance: new tests assert each route returns 200 and calls the matching helper
-    method (`flush_message`, `delete_message`, …) with the queue id; manual click-through
-    on `/queue` actually mutates the queue.
+    mirroring `app/api/users.py`. `get_current_user` auth kept on each.
+  - Acceptance: ✅ tests assert each route returns 200 and calls the matching helper method
+    with the queue id; helper failure surfaces its error code; unauthenticated → 401.
+  - Follow-up noted: on a *failed* action HTMX won't swap (non-2xx), so there's no visible
+    error toast yet — consistent with the rest of the app; improve in Phase D (#13).
 
 ---
 

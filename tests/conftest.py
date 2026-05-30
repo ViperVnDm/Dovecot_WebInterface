@@ -122,6 +122,7 @@ async def client(db_engine):
          patch("app.api.logs.get_helper_client", return_value=mock_helper), \
          patch("app.api.partials.get_helper_client", return_value=mock_helper), \
          patch("app.api.users.get_helper_client", return_value=mock_helper), \
+         patch("app.api.queue.get_helper_client", return_value=mock_helper), \
          patch("app.api.agent.get_helper_client", return_value=mock_helper), \
          patch("app.services.log_agent.get_helper_client", return_value=mock_helper):
         async with AsyncClient(
