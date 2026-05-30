@@ -31,11 +31,12 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Phases A + B ✅ COMPLETE. Phase C in progress.**
+- **Phases A + B + C ✅ COMPLETE. Phase D (UI) next.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU (not 4 GB) — efficiency matters more than thought.
-- **Last completed:** Step 8 — log-stats cached ~60s.
-- **Next up:** Step 9 — SQLite WAL + busy_timeout (last of Phase C).
-- **Last save point commit:** `plan(step8): cache today's log stats`.
+  Prod SQLite was `journal_mode=delete` before Step 9; deploy flips it to WAL.
+- **Last completed:** Step 9 — SQLite WAL + busy_timeout.
+- **Next up:** Step 10 — persist UI state across pages (`hx-boost` + Alpine `$persist`).
+- **Last save point commit:** `plan(step9): SQLite WAL + busy_timeout`.
 
 ---
 
@@ -113,10 +114,11 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Acceptance: ✅ test asserts a second call within the TTL is served from cache (no rescan);
     cache invalidates on TTL lapse or day rollover; lock-guarded for the executor.
 
-- [ ] **Step 9 — SQLite WAL + busy_timeout (#9)**
-  - Files: `app/database.py` (engine `connect_args` / PRAGMA on connect)
-  - Acceptance: `PRAGMA journal_mode` returns `wal`; concurrent writes don't raise
-    "database is locked" under a smoke test.
+- [x] **Step 9 — SQLite WAL + busy_timeout (#9)** ✅ _(done this session)_
+  - Files: `app/database.py` (`_apply_sqlite_pragmas` on the connect event:
+    WAL + busy_timeout=5000 + synchronous=NORMAL), `tests/test_database.py`
+  - Acceptance: ✅ test opens a file DB wired with the pragmas and asserts
+    `journal_mode=wal`, `busy_timeout=5000`. Prod was `delete` before; deploy flips to WAL.
 
 ---
 

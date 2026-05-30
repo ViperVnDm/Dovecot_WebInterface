@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float, UniqueConstraint, Index
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, BigInteger, Float, UniqueConstraint, Index, event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -222,6 +222,29 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
 )
+
+
+def _apply_sqlite_pragmas(dbapi_connection) -> None:
+    """Enable WAL + a busy timeout on each SQLite connection.
+
+    WAL lets readers and the single writer coexist — this app has several
+    background loops (alerts, storage, agent, session cleanup) plus request
+    handlers all writing the one DB file, so the default rollback journal
+    invites 'database is locked'. busy_timeout makes brief contention retry
+    instead of erroring; synchronous=NORMAL is the safe pairing with WAL.
+    """
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_on_connect(dbapi_connection, connection_record):
+        _apply_sqlite_pragmas(dbapi_connection)
+
 
 async_session = async_sessionmaker(
     engine,
