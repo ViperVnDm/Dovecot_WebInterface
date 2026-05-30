@@ -224,3 +224,29 @@ async def test_handle_client_runs_command_in_worker_thread(monkeypatch):
     assert resp == {"ok": True, "echo": 42}
     # Proves the blocking command ran in a worker thread, not the event loop.
     assert ran_on["thread"] != main_thread
+
+
+# ── Log-stats caching ─────────────────────────────────────────────────────────
+
+
+def test_log_stats_cached_within_ttl(monkeypatch):
+    """A second call inside the TTL is served from cache (no rescan)."""
+    from privileged import server
+
+    calls = {"n": 0}
+
+    def fake_compute(today):
+        calls["n"] += 1
+        return {"sent_today": 1, "received_today": 0, "bounced_today": 0, "errors_today": 0}
+
+    monkeypatch.setattr(server, "_compute_log_stats", fake_compute)
+    # Start from a clean cache so the test is order-independent.
+    server._log_stats_cache.update(date=None, ts=0.0, value=None)
+
+    first = server.cmd_get_log_stats({})
+    second = server.cmd_get_log_stats({})
+
+    assert first == second == {
+        "sent_today": 1, "received_today": 0, "bounced_today": 0, "errors_today": 0,
+    }
+    assert calls["n"] == 1  # second call hit the cache

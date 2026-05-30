@@ -17,6 +17,8 @@ import pwd
 import re
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -616,12 +618,8 @@ def cmd_read_logs(params: dict[str, Any]) -> dict[str, Any]:
     return {"entries": entries, "last_line": new_last_line}
 
 
-def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
-    """Count today's sent, received, bounced, and error events from mail.log."""
-    from datetime import date
-
-    today = date.today().isoformat()  # e.g. "2026-03-14"
-
+def _compute_log_stats(today: str) -> dict[str, Any]:
+    """Scan mail.log once and count today's sent/received/bounced/error events."""
     sent = received = bounced = errors = 0
 
     if not MAIL_LOG_PATH.exists():
@@ -656,6 +654,41 @@ def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
         "bounced_today": bounced,
         "errors_today": errors,
     }
+
+
+_LOG_STATS_TTL_SECONDS = 60
+_log_stats_cache: dict[str, Any] = {"date": None, "ts": 0.0, "value": None}
+_log_stats_lock = threading.Lock()
+
+
+def cmd_get_log_stats(params: dict[str, Any]) -> dict[str, Any]:
+    """Count today's sent/received/bounced/error events from mail.log.
+
+    Cached for _LOG_STATS_TTL_SECONDS — the logs page polls this every 30s and
+    a full mail.log scan each time is wasteful on a 1-core box. The cache
+    invalidates when the TTL lapses or the calendar day rolls over. A lock
+    guards the shared cache since commands now run in worker threads (Step 7).
+    """
+    from datetime import date
+
+    today = date.today().isoformat()  # e.g. "2026-03-14"
+    now = time.monotonic()
+
+    with _log_stats_lock:
+        cache = _log_stats_cache
+        if (
+            cache["value"] is not None
+            and cache["date"] == today
+            and (now - cache["ts"]) < _LOG_STATS_TTL_SECONDS
+        ):
+            return cache["value"]
+
+    # Scan outside the lock — it's the slow part, and a rare concurrent
+    # recompute is harmless (both produce the same answer; last write wins).
+    value = _compute_log_stats(today)
+    with _log_stats_lock:
+        _log_stats_cache.update(date=today, ts=time.monotonic(), value=value)
+    return value
 
 
 MAIL_SUBDIR = os.environ.get("USER_MAIL_SUBDIR", "Mail")

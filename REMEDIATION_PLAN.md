@@ -33,9 +33,9 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 ### Current status
 - **Phases A + B ✅ COMPLETE. Phase C in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU (not 4 GB) — efficiency matters more than thought.
-- **Last completed:** Step 7 — helper commands run in a thread executor.
-- **Next up:** Step 8 — cache today's log stats (~60s).
-- **Last save point commit:** `plan(step7): run helper commands in a thread executor`.
+- **Last completed:** Step 8 — log-stats cached ~60s.
+- **Next up:** Step 9 — SQLite WAL + busy_timeout (last of Phase C).
+- **Last save point commit:** `plan(step8): cache today's log stats`.
 
 ---
 
@@ -107,9 +107,11 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Acceptance: ✅ test drives `handle_client` with a fake reader/writer and asserts the
     command result is returned AND ran on a worker thread (not the event loop).
 
-- [ ] **Step 8 — Cache log stats (#8)**
-  - Files: `privileged/server.py` (`cmd_get_log_stats`) — memoize today's counts for ~30–60s.
-  - Acceptance: repeated `get_log_stats` within the window doesn't re-scan `mail.log`.
+- [x] **Step 8 — Cache log stats (#8)** ✅ _(done this session)_
+  - Files: `privileged/server.py` (`_compute_log_stats` + 60s cache in `cmd_get_log_stats`),
+    `tests/test_helper_logic.py`
+  - Acceptance: ✅ test asserts a second call within the TTL is served from cache (no rescan);
+    cache invalidates on TTL lapse or day rollover; lock-guarded for the executor.
 
 - [ ] **Step 9 — SQLite WAL + busy_timeout (#9)**
   - Files: `app/database.py` (engine `connect_args` / PRAGMA on connect)
