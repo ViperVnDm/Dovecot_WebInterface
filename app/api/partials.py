@@ -40,10 +40,10 @@ async def dashboard_stats(
     """Dashboard statistics cards."""
     helper = get_helper_client()
 
-    # Get data (with fallbacks)
+    # Get data (with fallbacks). Use the cheap count — the dashboard refreshes
+    # every 30s and must not trigger a full maildir walk just for a number.
     try:
-        users = await helper.list_users()
-        user_count = len(users)
+        user_count = await helper.count_users()
     except PrivilegedHelperError:
         user_count = 0
 

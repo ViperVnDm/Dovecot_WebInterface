@@ -306,10 +306,13 @@ def cmd_get_quota(params: dict[str, Any]) -> dict[str, Any]:
     return quota_info
 
 
-def cmd_list_users(params: dict[str, Any]) -> dict[str, Any]:
-    """List all mail users."""
-    users = []
+def _iter_mail_users():
+    """Yield pwd entries for users in the mail group, excluding reserved names.
 
+    Shared by the list/count/mailbox-size commands so the membership rule lives
+    in one place. Does NOT touch the filesystem — callers that need sizes call
+    _user_mail_size() themselves (that walk is the expensive part).
+    """
     try:
         mail_group = grp.getgrnam(MAIL_GROUP)
         mail_gid = mail_group.gr_gid
@@ -317,21 +320,35 @@ def cmd_list_users(params: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         mail_gid = None
         mail_members = set()
-
-    # List users in mail group (primary or supplementary)
     for user in pwd.getpwall():
         in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
         if in_mail_group and user.pw_name not in RESERVED_USERNAMES:
-            size_bytes, message_count = _user_mail_size(user.pw_dir)
-            users.append({
-                "username": user.pw_name,
-                "uid": user.pw_uid,
-                "gid": user.pw_gid,
-                "home": user.pw_dir,
-                "mailbox_size_bytes": size_bytes,
-                "mailbox_message_count": message_count,
-            })
+            yield user
 
+
+def cmd_count_users(params: dict[str, Any]) -> dict[str, Any]:
+    """Count mail users WITHOUT walking maildirs.
+
+    The dashboard refreshes a user-count card every 30s; using list_users there
+    means a full recursive maildir walk + stat() of every message file twice a
+    minute (≈84 MB on the live box). This counts group membership only.
+    """
+    return {"count": sum(1 for _ in _iter_mail_users())}
+
+
+def cmd_list_users(params: dict[str, Any]) -> dict[str, Any]:
+    """List all mail users (includes mailbox sizes — walks each maildir)."""
+    users = []
+    for user in _iter_mail_users():
+        size_bytes, message_count = _user_mail_size(user.pw_dir)
+        users.append({
+            "username": user.pw_name,
+            "uid": user.pw_uid,
+            "gid": user.pw_gid,
+            "home": user.pw_dir,
+            "mailbox_size_bytes": size_bytes,
+            "mailbox_message_count": message_count,
+        })
     return {"users": users}
 
 
@@ -669,26 +686,14 @@ def _user_mail_size(home_dir: str) -> tuple[int, int]:
 
 def cmd_mailbox_sizes(params: dict[str, Any]) -> dict[str, Any]:
     """Get mailbox sizes for all mail users (reads ~/Mail/)."""
-    try:
-        mail_group = grp.getgrnam(MAIL_GROUP)
-        mail_gid = mail_group.gr_gid
-        mail_members = set(mail_group.gr_mem)
-    except KeyError:
-        mail_gid = None
-        mail_members = set()
-
     mailboxes = []
-    for user in pwd.getpwall():
-        in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
-        if not in_mail_group or user.pw_name in RESERVED_USERNAMES:
-            continue
+    for user in _iter_mail_users():
         size_bytes, message_count = _user_mail_size(user.pw_dir)
         mailboxes.append({
             "username": user.pw_name,
             "size_bytes": size_bytes,
             "message_count": message_count,
         })
-
     mailboxes.sort(key=lambda x: x["size_bytes"], reverse=True)
     return {"mailboxes": mailboxes}
 
@@ -926,6 +931,7 @@ COMMANDS = {
     "set_quota": cmd_set_quota,
     "get_quota": cmd_get_quota,
     "list_users": cmd_list_users,
+    "count_users": cmd_count_users,
     "get_user": cmd_get_user,
     # Queue management
     "list_queue": cmd_list_queue,

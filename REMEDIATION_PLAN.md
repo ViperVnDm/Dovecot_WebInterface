@@ -31,10 +31,11 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Phases A + B ✅ COMPLETE. Phase C next.**
-- **Last completed:** Step 5 — audit-log writes + viewer at `/audit`.
-- **Next up:** Step 6 — stop walking every mailbox just to count users (efficiency).
-- **Last save point commit:** `plan(step5): complete audit log + add viewer`.
+- **Phases A + B ✅ COMPLETE. Phase C in progress.**
+- **Note:** prod is ~1 GiB RAM / 1 CPU (not 4 GB) — efficiency matters more than thought.
+- **Last completed:** Step 6 — `count_users` (no maildir walk for the dashboard count).
+- **Next up:** Step 7 — run blocking helper commands in a thread executor.
+- **Last save point commit:** `plan(step6): count users without walking maildirs`.
 
 ---
 
@@ -94,12 +95,12 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 
 ## Phase C — Efficiency on 1 CPU / 4 GB
 
-- [ ] **Step 6 — Stop walking every mailbox just to count users (#6)**
-  - Files: `privileged/server.py` (+ `app/core/permissions.py`, `app/api/partials.py`)
-  - Change: add a lightweight `count_users` path that skips `_user_mail_size`; have
-    `/partials/dashboard/stats` use it. Optionally cache mailbox sizes on a timer.
-  - Acceptance: dashboard stats no longer trigger a recursive maildir walk; a test asserts
-    the dashboard-stats path doesn't call the sizing routine.
+- [x] **Step 6 — Stop walking every mailbox just to count users (#6)** ✅ _(done this session)_
+  - Files: `privileged/server.py` (`_iter_mail_users` + `cmd_count_users`; list/mailbox
+    refactored to share it), `app/core/permissions.py` (`count_users`),
+    `app/api/partials.py` (dashboard uses it), `tests/test_dashboard.py`
+  - Acceptance: ✅ test asserts dashboard stats call `count_users` and NOT `list_users`.
+    Verified on prod: `count_users -> 3` (matches `getent group mail`), no maildir walk.
 
 - [ ] **Step 7 — Run blocking helper commands in an executor (#7)**
   - Files: `privileged/server.py` (`handle_client` → `loop.run_in_executor` for `cmd_*`)

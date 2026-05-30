@@ -95,9 +95,14 @@ class PrivilegedHelperClient:
         )
 
     async def list_users(self) -> list[dict[str, Any]]:
-        """List all mail users."""
+        """List all mail users (includes mailbox sizes; walks maildirs)."""
         response = await self._send_command("list_users", {})
         return response.get("users", [])
+
+    async def count_users(self) -> int:
+        """Count mail users without computing mailbox sizes (cheap)."""
+        response = await self._send_command("count_users", {})
+        return int(response.get("count", 0))
 
     async def get_user(self, username: str) -> dict[str, Any] | None:
         """Get details for a specific user."""

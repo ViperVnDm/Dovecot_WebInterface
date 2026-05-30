@@ -35,6 +35,7 @@ def make_mock_helper() -> AsyncMock:
         {"username": "zucchini", "uid": 1003, "gid": 1007, "home": "/home/zucchini",
          "mailbox_size_bytes": 0, "mailbox_message_count": 0},
     ]
+    mock.count_users.return_value = 2
     mock.get_queue_stats.return_value = {
         "active": 0, "deferred": 0, "hold": 0, "incoming": 0, "total": 0,
     }
