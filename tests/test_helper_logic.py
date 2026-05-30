@@ -166,3 +166,61 @@ class TestCheckerEvaluate:
 
     def test_unknown_operator(self):
         assert checker_evaluate(100, "??", 50) is False
+
+
+# ── handle_client dispatch (commands run in a thread executor) ────────────────
+
+import asyncio
+import json
+import threading
+
+
+class _FakeWriter:
+    """Minimal asyncio StreamWriter stand-in for handle_client tests."""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def get_extra_info(self, name):
+        return None  # no peername/socket → the SO_PEERCRED check is skipped
+
+    def write(self, data):
+        self.buf += data
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    async def wait_closed(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_handle_client_runs_command_in_worker_thread(monkeypatch):
+    """Dispatch returns the command result AND runs it off the event loop."""
+    from privileged import server
+
+    main_thread = threading.get_ident()
+    ran_on = {}
+
+    def fake_cmd(params):
+        ran_on["thread"] = threading.get_ident()
+        return {"ok": True, "echo": params.get("x")}
+
+    monkeypatch.setitem(server.COMMANDS, "fake_cmd", fake_cmd)
+
+    reader = asyncio.StreamReader()
+    reader.feed_data(
+        json.dumps({"command": "fake_cmd", "params": {"x": 42}}).encode() + b"\n"
+    )
+    reader.feed_eof()
+    writer = _FakeWriter()
+
+    await server.handle_client(reader, writer)
+
+    resp = json.loads(bytes(writer.buf).decode().strip())
+    assert resp == {"ok": True, "echo": 42}
+    # Proves the blocking command ran in a worker thread, not the event loop.
+    assert ran_on["thread"] != main_thread

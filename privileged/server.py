@@ -1003,7 +1003,14 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     response = {"error": f"Unknown command: {command}", "code": 400}
                 else:
                     try:
-                        response = COMMANDS[command](params)
+                        # Commands are blocking (subprocess, full-file log reads,
+                        # maildir walks). Run them in a worker thread so one slow
+                        # call can't stall the event loop / other connections —
+                        # the dashboard fires several helper calls at once.
+                        loop = asyncio.get_running_loop()
+                        response = await loop.run_in_executor(
+                            None, COMMANDS[command], params
+                        )
                     except CommandError as e:
                         response = {"error": e.message, "code": e.code}
                     except Exception:

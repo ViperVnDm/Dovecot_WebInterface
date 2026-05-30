@@ -33,9 +33,9 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 ### Current status
 - **Phases A + B ✅ COMPLETE. Phase C in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU (not 4 GB) — efficiency matters more than thought.
-- **Last completed:** Step 6 — `count_users` (no maildir walk for the dashboard count).
-- **Next up:** Step 7 — run blocking helper commands in a thread executor.
-- **Last save point commit:** `plan(step6): count users without walking maildirs`.
+- **Last completed:** Step 7 — helper commands run in a thread executor.
+- **Next up:** Step 8 — cache today's log stats (~60s).
+- **Last save point commit:** `plan(step7): run helper commands in a thread executor`.
 
 ---
 
@@ -102,9 +102,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Acceptance: ✅ test asserts dashboard stats call `count_users` and NOT `list_users`.
     Verified on prod: `count_users -> 3` (matches `getent group mail`), no maildir walk.
 
-- [ ] **Step 7 — Run blocking helper commands in an executor (#7)**
-  - Files: `privileged/server.py` (`handle_client` → `loop.run_in_executor` for `cmd_*`)
-  - Acceptance: a slow command no longer serializes unrelated concurrent helper calls.
+- [x] **Step 7 — Run blocking helper commands in an executor (#7)** ✅ _(done this session)_
+  - Files: `privileged/server.py` (`handle_client` → `loop.run_in_executor`), `tests/test_helper_logic.py`
+  - Acceptance: ✅ test drives `handle_client` with a fake reader/writer and asserts the
+    command result is returned AND ran on a worker thread (not the event loop).
 
 - [ ] **Step 8 — Cache log stats (#8)**
   - Files: `privileged/server.py` (`cmd_get_log_stats`) — memoize today's counts for ~30–60s.
