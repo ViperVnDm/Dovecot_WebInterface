@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import record_audit
 from app.core.security import get_current_user
 from app.database import get_db, AdminUser, AlertRule, AppSetting
 from app.services.alert_checker import (
@@ -138,6 +139,12 @@ async def create_rule(
         cooldown_minutes=cooldown_minutes,
     )
     db.add(rule)
+    await db.flush()
+    await record_audit(
+        db, user_id=current_user.id, action="create_alert_rule",
+        resource_type="alert_rule", resource_id=str(rule.id),
+        details={"name": name, "rule_type": rule_type}, request=request,
+    )
     await db.commit()
     return await _render_rules(request, db)
 
@@ -153,6 +160,11 @@ async def delete_rule(
     result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if rule:
+        await record_audit(
+            db, user_id=current_user.id, action="delete_alert_rule",
+            resource_type="alert_rule", resource_id=str(rule_id),
+            details={"name": rule.name}, request=request,
+        )
         await db.delete(rule)
         await db.commit()
     return await _render_rules(request, db)
@@ -186,6 +198,11 @@ async def update_rule(
         rule.notification_type = notification_type
         rule.notification_target = notification_target
         rule.cooldown_minutes = cooldown_minutes
+        await record_audit(
+            db, user_id=current_user.id, action="update_alert_rule",
+            resource_type="alert_rule", resource_id=str(rule_id),
+            details={"name": name}, request=request,
+        )
         await db.commit()
     return await _render_rules(request, db)
 
@@ -202,6 +219,11 @@ async def toggle_rule(
     rule = result.scalar_one_or_none()
     if rule:
         rule.is_enabled = not rule.is_enabled
+        await record_audit(
+            db, user_id=current_user.id, action="toggle_alert_rule",
+            resource_type="alert_rule", resource_id=str(rule_id),
+            details={"enabled": rule.is_enabled}, request=request,
+        )
         await db.commit()
     return await _render_rules(request, db)
 

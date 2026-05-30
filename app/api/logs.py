@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.audit import record_audit
 from app.core.security import get_current_user, validate_session
 from app.core.permissions import get_helper_client, PrivilegedHelperError
 from app.database import get_db, AdminUser, AppSetting, async_session
@@ -225,6 +226,12 @@ async def ban_ip(
         except PrivilegedHelperError:
             pass
 
+    await record_audit(
+        db, user_id=current_user.id, action="ban_ip",
+        resource_type="ip", resource_id=target, request=request,
+    )
+    await db.commit()
+
     # Return updated banned IPs list for HTMX
     try:
         banned_ips = await helper.list_banned_ips()
@@ -241,6 +248,7 @@ async def unban_ip(
     request: Request,
     ip: str,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Remove a UFW ban for an IP address or CIDR range."""
     helper = get_helper_client()
@@ -248,6 +256,12 @@ async def unban_ip(
         await helper.unban_ip(ip)
     except PrivilegedHelperError as e:
         raise HTTPException(status_code=e.code, detail=e.message)
+
+    await record_audit(
+        db, user_id=current_user.id, action="unban_ip",
+        resource_type="ip", resource_id=ip, request=request,
+    )
+    await db.commit()
 
     # Return updated banned IPs list for HTMX
     try:

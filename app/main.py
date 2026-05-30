@@ -191,3 +191,16 @@ async def agent_page(
         "logs/agent.html",
         {"title": "Log Agent", "current_user": current_user},
     )
+
+
+@app.get("/audit")
+async def audit_page(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+):
+    """Audit log page."""
+    return templates.TemplateResponse(
+        request,
+        "audit/index.html",
+        {"title": "Audit Log", "current_user": current_user},
+    )

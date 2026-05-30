@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
-from app.database import get_db, AdminUser, AlertRule, AlertHistory
+from app.database import get_db, AdminUser, AlertRule, AlertHistory, AuditLog
 from app.templates_setup import templates
 
 logger = logging.getLogger(__name__)
@@ -538,4 +538,37 @@ async def alerts_history(
         request,
         "partials/alerts_history.html",
         {"history": history},
+    )
+
+
+# ============== Audit Log Partial ==============
+
+
+@router.get("/audit/entries")
+async def audit_entries(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent audit-log entries (most recent 100), joined to admin usernames."""
+    result = await db.execute(
+        select(AuditLog, AdminUser.username)
+        .outerjoin(AdminUser, AuditLog.user_id == AdminUser.id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(100)
+    )
+    entries = [
+        {
+            "created_at": audit.created_at,
+            "username": username or "system",
+            "action": audit.action,
+            "resource_type": audit.resource_type,
+            "resource_id": audit.resource_id,
+            "details": audit.details,
+            "ip_address": audit.ip_address,
+        }
+        for audit, username in result.all()
+    ]
+    return templates.TemplateResponse(
+        request, "partials/audit_log.html", {"entries": entries},
     )

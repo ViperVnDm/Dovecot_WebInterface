@@ -1,10 +1,12 @@
 """User management API routes."""
 
 from fastapi import APIRouter, Depends, Form, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import record_audit
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
-from app.database import AdminUser
+from app.database import AdminUser, get_db
 from app.templates_setup import templates
 
 router = APIRouter()
@@ -38,6 +40,7 @@ async def create_user(
     password: str = Form(...),
     quota_mb: int = Form(default=0),
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new mail user."""
     helper = get_helper_client()
@@ -50,6 +53,12 @@ async def create_user(
             {"error": e.message},
             status_code=400,
         )
+    await record_audit(
+        db, user_id=current_user.id, action="create_user",
+        resource_type="mail_user", resource_id=username,
+        details={"quota_mb": quota_mb}, request=request,
+    )
+    await db.commit()
     return await _render_users_list(request)
 
 
@@ -59,6 +68,7 @@ async def set_password(
     username: str,
     password: str = Form(...),
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Change a user's password."""
     helper = get_helper_client()
@@ -71,6 +81,11 @@ async def set_password(
             {"error": e.message},
             status_code=400,
         )
+    await record_audit(
+        db, user_id=current_user.id, action="set_password",
+        resource_type="mail_user", resource_id=username, request=request,
+    )
+    await db.commit()
     return await _render_users_list(request)
 
 
@@ -79,6 +94,7 @@ async def delete_user(
     request: Request,
     username: str,
     current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete a mail user."""
     helper = get_helper_client()
@@ -91,4 +107,9 @@ async def delete_user(
             {"error": e.message},
             status_code=400,
         )
+    await record_audit(
+        db, user_id=current_user.id, action="delete_user",
+        resource_type="mail_user", resource_id=username, request=request,
+    )
+    await db.commit()
     return await _render_users_list(request)

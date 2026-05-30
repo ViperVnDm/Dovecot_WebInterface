@@ -31,10 +31,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Phase A ✅ COMPLETE. Phase B in progress.**
-- **Last completed:** Step 4 — expired-session purge loop.
-- **Next up:** Step 5 — complete + view the audit log (last of Phase B).
-- **Last save point commit:** `plan(step4): purge expired sessions hourly`.
+- **Phases A + B ✅ COMPLETE. Phase C next.**
+- **Last completed:** Step 5 — audit-log writes + viewer at `/audit`.
+- **Next up:** Step 6 — stop walking every mailbox just to count users (efficiency).
+- **Last save point commit:** `plan(step5): complete audit log + add viewer`.
 
 ---
 
@@ -80,11 +80,15 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
     existing loop) and/or opportunistically on login.
   - Acceptance: a test inserts an expired session and asserts the cleanup deletes it.
 
-- [ ] **Step 5 — Complete + view the audit log (#5)** _(splittable: 5a writes, 5b viewer)_
-  - Files: `app/api/users.py`, `app/api/logs.py` (ban/unban), `app/api/alerts.py` (write
-    `AuditLog`); new `/audit` route + `partials/audit_log.html` (read-only view)
-  - Acceptance: creating/deleting a mail user, changing a password, and manual ban/unban each
-    write an `AuditLog` row; `/audit` renders them. Tests cover the writes.
+- [x] **Step 5 — Complete + view the audit log (#5)** ✅ _(done this session)_
+  - Files: new `app/core/audit.py` (`record_audit` helper); audit writes in `app/api/users.py`
+    (create/password/delete), `app/api/logs.py` (ban/unban), `app/api/alerts.py`
+    (create/update/delete/toggle); viewer = `GET /audit` (main.py) +
+    `/partials/audit/entries` (partials.py) + `templates/audit/index.html` +
+    `templates/partials/audit_log.html`; sidebar link in base.html; `tests/test_audit.py` (7 tests).
+  - Acceptance: ✅ each audited action writes a row (verified by reading it back through the
+    viewer partial); `/audit` page loads; viewer is auth-protected. Source IP captured via
+    `request.client.host` (now real, thanks to Step 3).
 
 ---
 
