@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_macros.html" import collapsible_card %}
 
 {% block content %}
 <div class="space-y-6">
@@ -19,10 +20,7 @@
     </div>
 
     <!-- Settings -->
-    <div class="bg-white rounded-lg shadow">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">Agent Settings</h2>
-        </div>
+    {% call collapsible_card("Agent Settings", "agent_settings") %}
         <div id="agent-settings"
              class="px-6 py-4"
              hx-get="/api/agent/settings"
@@ -30,7 +28,7 @@
              hx-swap="innerHTML">
             <p class="text-gray-500 text-sm">Loading...</p>
         </div>
-    </div>
+    {% endcall %}
 
     <!-- Pending suggestions -->
     <div class="bg-white rounded-lg shadow">

@@ -1,0 +1,32 @@
+{#
+  Shared template macros.
+
+  collapsible_card(title, key, open=true): a white card with a clickable header
+  that toggles its body. The open/closed state persists per-card across page
+  loads via Alpine $persist (keyed by `card_<key>`), so a section you minimise
+  stays minimised as you move between pages. Body content goes in the {% call %}.
+
+    {% from "partials/_macros.html" import collapsible_card %}
+    {% call collapsible_card("Agent Settings", "agent_settings") %}
+        <div class="px-6 py-4"> ... </div>
+    {% endcall %}
+#}
+{% macro collapsible_card(title, key, open=true) %}
+<div class="bg-white rounded-lg shadow"
+     x-data="{ open: $persist({{ 'true' if open else 'false' }}).as('card_{{ key }}') }">
+    <button type="button"
+            @click="open = !open"
+            class="w-full px-6 py-4 flex justify-between items-center text-left focus:outline-none"
+            :class="open ? 'border-b border-gray-200' : ''">
+        <h2 class="text-lg font-semibold text-gray-900">{{ title }}</h2>
+        <svg class="w-5 h-5 text-gray-400 transition-transform"
+             :class="open ? 'rotate-180' : ''"
+             fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+    </button>
+    <div x-show="open" x-cloak>
+        {{ caller() }}
+    </div>
+</div>
+{% endmacro %}

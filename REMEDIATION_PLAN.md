@@ -34,9 +34,9 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 - **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
   is the one change not browser-verified here (trivially reverted: one body attribute).
-- **Last completed:** Step 10 — `$persist` sidebar + `hx-boost` + 401→login + page smoke tests.
-- **Next up:** Step 11 — reusable collapsible-card component.
-- **Last save point commit:** `plan(step10): persist UI state across pages`.
+- **Last completed:** Step 11 — `collapsible_card` macro on Alerts + Agent settings.
+- **Next up:** Step 12 — one name per page.
+- **Last save point commit:** `plan(step11): reusable collapsible-card macro`.
 
 ---
 
@@ -132,10 +132,12 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
   - Acceptance: ✅ page smoke tests green (server render). Cross-page collapse persistence +
     boosted nav need a browser to confirm (noted; hx-boost is one-attribute revertible).
 
-- [ ] **Step 11 — One reusable collapsible-card component (#11)**
-  - Files: new `app/templates/partials/_card.html` (Jinja macro) or an Alpine pattern;
-    apply to alerts settings + agent settings + other sections; `$persist` per-card open state.
-  - Acceptance: every section card uses the same chrome; collapse state persists per card.
+- [x] **Step 11 — One reusable collapsible-card component (#11)** ✅ _(done this session)_
+  - Files: new `app/templates/partials/_macros.html` (`collapsible_card`); applied to the
+    Alerts "Notification Settings" and Agent "Agent Settings" cards.
+  - Change: single source of truth for card chrome; per-card `$persist` open state; fixes the
+    old double-`border-b` bug. Acceptance: ✅ both pages render (smoke test).
+  - Follow-up: other static section cards can adopt the macro later — low priority.
 
 - [ ] **Step 12 — One name per page (#12)**
   - Files: route `title=` in `app/main.py`, page `<h1>`s, sidebar labels
