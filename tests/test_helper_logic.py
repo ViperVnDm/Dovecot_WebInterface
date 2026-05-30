@@ -132,12 +132,10 @@ class TestLogLevelDetection:
         assert detect_log_level(msg) == "warning"
 
     def test_auth_failed_syslog(self):
-        # NOTE: an auth-failure line with no explicit level keyword classifies
-        # as "info" today. Whether the log viewer should surface auth failures
-        # as "warning" is a deliberate behavior change tracked as Step E16 in
-        # REMEDIATION_PLAN.md.
+        # Step E16 decision: auth-failure lines surface as "warning" — security-
+        # relevant, but not "error" (failed logins are routine bot traffic).
         msg = "authentication failed: user=<support>"
-        assert detect_log_level(msg) == "info"
+        assert detect_log_level(msg) == "warning"
 
     def test_plain_info_syslog(self):
         msg = "connect from unknown[185.93.89.64]"

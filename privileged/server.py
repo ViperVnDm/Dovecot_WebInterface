@@ -517,6 +517,10 @@ def detect_log_level(message: str) -> str:
         return "error"
     if "warning" in msg_lower or "warn" in msg_lower:
         return "warning"
+    # Auth failures are security-relevant, so surface them above info noise —
+    # but not as "error", since failed SMTP/IMAP logins are routine bot traffic.
+    if "authentication failed" in msg_lower or "auth failed" in msg_lower:
+        return "warning"
     return "info"
 
 

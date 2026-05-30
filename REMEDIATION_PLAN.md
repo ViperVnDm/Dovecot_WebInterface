@@ -34,10 +34,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 - **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
   is the one change not browser-verified here (trivially reverted: one body attribute).
-- **Phases A–D ✅ COMPLETE. Phase E in progress.**
-- **Last completed:** Step 15 — refreshed CLAUDE.md Known Quirks + stale memory.
-- **Next up:** Step 16 — auth-failure classification decision (last step).
-- **Last save point commit:** `plan(step15): refresh stale docs + memory`.
+- **🎉 ALL 16 STEPS COMPLETE (Phases A–E).**
+- **Last completed:** Step 16 — auth failures classify as `warning` in the log viewer.
+- **Next up:** test → merge `remediation` → `main` → deploy via `dovecot-webadmin-update`.
+- **Last save point commit:** `plan(step16): classify auth failures as warning`.
 
 ---
 
@@ -167,10 +167,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
     subsystems (audit log, WAL pragmas, 4 background tasks, `count_users`); added queue+agent
     to the conftest patch list. Memory `feedback_starlette_templateresponse.md` marked complete.
 
-- [ ] **Step E16 — DECISION: classify auth failures in the log viewer?** _(spun out of Step 1)_
-  - Question: should `cmd_read_logs` mark "authentication failed" lines as `warning`
-    (security-relevant) vs leave as `info` (avoid drowning the viewer in routine bot noise)?
-  - If yes: update `detect_log_level()` + its test. This is a behavior change, hence isolated.
+- [x] **Step E16 — DECISION: classify auth failures in the log viewer?** ✅ _(done this session)_
+  - **Decision: `warning`.** Security-relevant enough to stand out, but not `error` (failed
+    SMTP/IMAP logins are routine bot traffic that would drown real errors). `detect_log_level()`
+    + its test updated. One-line revert to `info` if preferred.
 
 ---
 
