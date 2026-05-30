@@ -31,12 +31,12 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 5. Work the one step, get tests green, commit `plan(stepN): …`, tick its box, stop or continue.
 
 ### Current status
-- **Phases A + B + C ✅ COMPLETE. Phase D (UI) next.**
-- **Note:** prod is ~1 GiB RAM / 1 CPU (not 4 GB) — efficiency matters more than thought.
-  Prod SQLite was `journal_mode=delete` before Step 9; deploy flips it to WAL.
-- **Last completed:** Step 9 — SQLite WAL + busy_timeout.
-- **Next up:** Step 10 — persist UI state across pages (`hx-boost` + Alpine `$persist`).
-- **Last save point commit:** `plan(step9): SQLite WAL + busy_timeout`.
+- **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
+- **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
+  is the one change not browser-verified here (trivially reverted: one body attribute).
+- **Last completed:** Step 10 — `$persist` sidebar + `hx-boost` + 401→login + page smoke tests.
+- **Next up:** Step 11 — reusable collapsible-card component.
+- **Last save point commit:** `plan(step10): persist UI state across pages`.
 
 ---
 
@@ -124,11 +124,13 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 
 ## Phase D — UI consistency & cross-page state (your original concern)
 
-- [ ] **Step 10 — Persist UI state across pages (#10)**
-  - Files: `app/templates/base.html`
-  - Change: add `hx-boost="true"` so navigation is AJAX (state survives, faster loads);
-    add Alpine `$persist` (or localStorage) for `sidebarOpen`.
-  - Acceptance: collapse the sidebar, navigate to another page → it stays collapsed.
+- [x] **Step 10 — Persist UI state across pages (#10)** ✅ _(done this session)_
+  - Files: `app/templates/base.html`, `tests/test_pages.py` (new — 8-page smoke test)
+  - Change: Alpine persist plugin + `sidebarOpen: $persist(...)`; `hx-boost="true"` on body
+    (logout form `hx-boost="false"` so auth stays a plain POST); `htmx:responseError` now
+    bounces 401s to `/login`.
+  - Acceptance: ✅ page smoke tests green (server render). Cross-page collapse persistence +
+    boosted nav need a browser to confirm (noted; hx-boost is one-attribute revertible).
 
 - [ ] **Step 11 — One reusable collapsible-card component (#11)**
   - Files: new `app/templates/partials/_card.html` (Jinja macro) or an Alpine pattern;
