@@ -34,10 +34,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 - **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
   is the one change not browser-verified here (trivially reverted: one body attribute).
-- **Phase D ✅ COMPLETE. Phase E next.**
-- **Last completed:** Steps 12 + 13 — page-name consistency + unified modal escape.
-- **Next up:** Step 14 — remove dead API stubs (Phase E).
-- **Last save point commit:** `plan(step12-13): consistent page names + modal escape`.
+- **Phase D ✅ COMPLETE. Phase E in progress.**
+- **Last completed:** Step 14 — removed dead API stubs.
+- **Next up:** Step 15 — refresh stale docs + memory.
+- **Last save point commit:** `plan(step14): remove dead API stubs`.
 
 ---
 
@@ -154,9 +154,13 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 
 ## Phase E — Cleanup & deferred decisions
 
-- [ ] **Step 14 — Implement or delete dead API stubs (#14)**
-  - Files: `app/api/storage.py`, `app/api/logs.py::get_logs`, `/api/logs/ws`
-  - Acceptance: no auth-protected route returns a hardcoded empty/501 placeholder.
+- [x] **Step 14 — Implement or delete dead API stubs (#14)** ✅ _(done this session)_
+  - Removed the empty/501 placeholder routes + their now-unused Pydantic models and imports:
+    `queue.py` GET `""`/`/stats`/`/{queue_id}`; `storage.py` `/mailboxes`/`/history`/`/alerts`;
+    `logs.py` GET `""` (`get_logs`).
+  - Kept (NOT placeholders): `storage.py /disk` (returns real data) and `logs.py /ws`
+    (auth-gated + has a security test; streaming still a future enhancement).
+  - Acceptance: ✅ full suite green; `import app.main` clean.
 
 - [ ] **Step 15 — Refresh stale docs + memory (#15)**
   - Files: `CLAUDE.md` "Known Quirks" (TemplateResponse migration is DONE on Starlette 1.0.0;

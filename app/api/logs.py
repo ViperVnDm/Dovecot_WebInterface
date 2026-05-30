@@ -1,11 +1,8 @@
 """Mail log viewing API routes."""
 
 import ipaddress
-from datetime import datetime
-from enum import Enum
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,50 +16,6 @@ from app.templates_setup import templates
 router = APIRouter()
 
 SETTING_BAN_ALLOWLIST = "ban_allowlist"
-
-
-class LogLevel(str, Enum):
-    """Log entry severity level."""
-
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
-
-
-class LogEntry(BaseModel):
-    """A parsed mail log entry."""
-
-    timestamp: datetime
-    host: str
-    service: str  # postfix/smtp, dovecot, etc.
-    pid: int | None = None
-    level: LogLevel = LogLevel.INFO
-    message: str
-    queue_id: str | None = None
-    sender: str | None = None
-    recipient: str | None = None
-    status: str | None = None
-
-
-class DeliveryStats(BaseModel):
-    """Email delivery statistics."""
-
-    period: str  # "day", "week", "month"
-    sent: int
-    deferred: int
-    bounced: int
-    rejected: int
-
-
-class ConnectionStats(BaseModel):
-    """Connection statistics."""
-
-    period: str
-    smtp_connections: int
-    imap_connections: int
-    pop3_connections: int
-    successful_logins: int
-    failed_logins: int
 
 
 # ── Allowlist helpers ────────────────────────────────────────────────────────
@@ -321,26 +274,13 @@ async def export_ip_lists(
     )
 
 
-@router.get("")
-async def get_logs(
-    lines: int = Query(default=100, ge=1, le=1000),
-    level: LogLevel | None = None,
-    service: str | None = None,
-    search: str | None = None,
-    current_user: AdminUser = Depends(get_current_user),
-) -> list[LogEntry]:
-    """Get recent mail log entries."""
-    return []
-
-
-VALID_LOG_SERVICES = frozenset({"postfix", "dovecot", "spamd", "spamassassin", "webadmin"})
-
-
 @router.websocket("/ws")
 async def logs_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time log streaming.
 
-    Requires a valid session cookie (mirrors HTTP route auth).
+    Requires a valid session cookie (mirrors HTTP route auth). Currently only
+    enforces auth + holds the connection; streaming is not yet implemented (the
+    logs page polls instead), but the auth gate is covered by a security test.
     """
     settings = get_settings()
     token = websocket.cookies.get(settings.session_cookie_name)
