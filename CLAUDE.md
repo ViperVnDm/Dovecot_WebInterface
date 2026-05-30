@@ -11,7 +11,7 @@ FastAPI/Python web admin console for Dovecot + Postfix mail servers. Uses HTMX f
 - **Backend:** FastAPI, SQLAlchemy (async), aiosqlite, pydantic-settings
 - **Templates:** Jinja2 + HTMX, Tailwind CSS (CDN)
 - **Auth:** Custom session tokens (bcrypt passwords, DB-backed sessions, HttpOnly cookies)
-- **Background tasks:** asyncio tasks started in FastAPI lifespan (alert checker, storage collector)
+- **Background tasks:** asyncio tasks started in FastAPI lifespan (alert checker, storage collector, log-triage agent, expired-session cleanup)
 - **Tests:** pytest + pytest-asyncio, httpx AsyncClient, in-memory SQLite, unittest.mock
 
 ## Key Architecture Decisions
@@ -26,7 +26,7 @@ JSON over Unix socket. Each command is `{"cmd": "...", "params": {...}}`. The he
 Page sections are loaded and refreshed via HTMX. All partial renderers live in `app/api/partials.py`. Each page template in `app/templates/` uses `hx-get` to load its partials on mount and `hx-trigger="every 30s"` for auto-refresh where appropriate.
 
 ### Database
-SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrations — `init_db()` uses `create_all` (suitable for this app's scale). Key-value runtime settings (SMTP config, alert check interval, IP allowlist) are stored in the `app_settings` table.
+SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrations — `init_db()` uses `create_all` (suitable for this app's scale). Key-value runtime settings (SMTP config, alert check interval, IP allowlist) are stored in the `app_settings` table. Each SQLite connection is opened in WAL mode with a 5s `busy_timeout` (`_apply_sqlite_pragmas` on the SQLAlchemy `connect` event) so the several background loops and request handlers don't collide with "database is locked".
 
 ### Alert System
 - `app/services/alert_checker.py`: background loop, evaluates rules, enforces cooldowns, writes `AlertHistory`, sends email/webhook
@@ -37,6 +37,9 @@ SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrati
 
 ### Storage History
 `storage_collector_loop()` takes a disk usage snapshot on startup then every hour. `StorageHistory` records are queried last 30 days (one point per calendar day) for the history chart.
+
+### Audit Log
+`app/core/audit.py` `record_audit(db, ...)` adds an `AuditLog` row (the caller commits, so it shares the transaction of the change it records). Called from user CRUD (`users.py`), manual IP ban/unban (`logs.py`), alert-rule create/update/delete/toggle (`alerts.py`), and agent suggestion approve/reject (`agent.py` / `log_agent.py`). Viewable read-only at `/audit` via `/partials/audit/entries` (outer-joins `AdminUser` for the username; `user_id=None` renders as "system"). The source IP is `request.client.host`, accurate only because uvicorn runs with `--proxy-headers --forwarded-allow-ips=127.0.0.1` behind nginx (set in the systemd unit).
 
 ### IP Banning
 UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 addresses and CIDR ranges (e.g., `10.0.0.0/8`). Validation in the helper: `_validate_ip_or_cidr()` checks format, octet ranges, prefix length (0-32), and rejects loopback/wildcard. `cmd_list_banned_ips()` parses both CIDR and plain IP entries from `ufw status` output.
@@ -55,7 +58,7 @@ UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 add
 Log level detection checks for a Python log prefix (`INFO:`, `WARNING:`, `ERROR:`) at the start of the message *before* falling back to keyword search — this avoids false positives from URLs like `?level=error` in access logs.
 
 ### Mail Storage Path
-Dovecot is configured with `mail_location = maildir:~/Mail:INBOX=~/Mail/Inbox:LAYOUT=fs`. Mailbox sizes are computed by walking `~/Mail/` and counting files in `cur/` and `new/` subdirectories only (not index files). Controlled by `USER_MAIL_SUBDIR` env var in the helper (default: `Mail`).
+Dovecot is configured with `mail_location = maildir:~/Mail:INBOX=~/Mail/Inbox:LAYOUT=fs`. Mailbox sizes are computed by walking `~/Mail/` and counting files in `cur/` and `new/` subdirectories only (not index files). Controlled by `USER_MAIL_SUBDIR` env var in the helper (default: `Mail`). Walking maildirs is expensive, so only `list_users` / `mailbox_sizes` do it — the dashboard user-count card uses the lightweight `count_users` command (group membership only, no filesystem walk).
 
 ## Common Tasks
 
@@ -95,6 +98,8 @@ If `/opt/dovecot-webadmin/` is a legacy copy-based install (no `.git`), `update.
 - `app.api.logs.get_helper_client`
 - `app.api.partials.get_helper_client`
 - `app.api.users.get_helper_client`
+- `app.api.queue.get_helper_client`
+- `app.api.agent.get_helper_client`
 
 If a new module imports `get_helper_client`, add it to the patch list in `conftest.py`.
 
@@ -121,6 +126,5 @@ Runtime settings (SMTP config, alert interval, IP allowlist) are stored in the `
 ## Known Quirks
 
 - `bcrypt` must be pinned to `<4.0.0` (passlib compatibility)
-- `app/api/queue.py` uses `regex=` on a `Query()` parameter — this is deprecated in newer FastAPI but still works; will show a `FastAPIDeprecationWarning` in tests
-- Starlette `TemplateResponse` argument order — `app/api/logs.py` and log-related partials in `app/api/partials.py` use the new Starlette 1.0 form `(request, name, context={})`. Other modules (`alerts.py`, `auth.py`, remaining partials) still use the old `(name, {"request": ...})` form which crashes with Starlette 1.0 + Jinja2 3.1 due to unhashable dict in cache key. These should be migrated to the new form.
+- Starlette `TemplateResponse` calls all use the new `(request, name, {...})` form (Starlette 1.0.0 + Jinja2 3.1). Keep using it — the old `(name, {"request": ...})` form raises `TypeError: unhashable type: 'dict'`. (Migration completed 2026-05-30.)
 - `asyncio.open_unix_connection` does not exist on Windows; the helper IPC client will fail on Windows (expected — the helper is Linux-only)

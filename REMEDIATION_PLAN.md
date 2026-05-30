@@ -34,10 +34,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
 - **Phases A + B + C ✅ COMPLETE. Phase D in progress.**
 - **Note:** prod is ~1 GiB RAM / 1 CPU. SQLite flips delete→WAL on deploy. `hx-boost`
   is the one change not browser-verified here (trivially reverted: one body attribute).
-- **Phase D ✅ COMPLETE. Phase E in progress.**
-- **Last completed:** Step 14 — removed dead API stubs.
-- **Next up:** Step 15 — refresh stale docs + memory.
-- **Last save point commit:** `plan(step14): remove dead API stubs`.
+- **Phases A–D ✅ COMPLETE. Phase E in progress.**
+- **Last completed:** Step 15 — refreshed CLAUDE.md Known Quirks + stale memory.
+- **Next up:** Step 16 — auth-failure classification decision (last step).
+- **Last save point commit:** `plan(step15): refresh stale docs + memory`.
 
 ---
 
@@ -162,10 +162,10 @@ git add -A && git commit -m "plan(step1): green-test baseline + de-drift log-lev
     (auth-gated + has a security test; streaming still a future enhancement).
   - Acceptance: ✅ full suite green; `import app.main` clean.
 
-- [ ] **Step 15 — Refresh stale docs + memory (#15)**
-  - Files: `CLAUDE.md` "Known Quirks" (TemplateResponse migration is DONE on Starlette 1.0.0;
-    `queue.py` already uses `pattern=` not `regex=`); memory `feedback_starlette_templateresponse.md`.
-  - Acceptance: Known Quirks reflects reality; no contradicting memory.
+- [x] **Step 15 — Refresh stale docs + memory (#15)** ✅ _(done this session)_
+  - `CLAUDE.md`: dropped the stale `regex=`/TemplateResponse quirks; documented the new
+    subsystems (audit log, WAL pragmas, 4 background tasks, `count_users`); added queue+agent
+    to the conftest patch list. Memory `feedback_starlette_templateresponse.md` marked complete.
 
 - [ ] **Step E16 — DECISION: classify auth failures in the log viewer?** _(spun out of Step 1)_
   - Question: should `cmd_read_logs` mark "authentication failed" lines as `warning`
