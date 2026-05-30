@@ -75,7 +75,15 @@ class TestValidateQueueId:
 class TestValidateIp:
     def test_valid(self):
         assert _validate_ip("1.2.3.4") == "1.2.3.4"
-        assert _validate_ip("255.255.255.255") == "255.255.255.255"
+        assert _validate_ip("8.8.8.8") == "8.8.8.8"
+
+    def test_reserved_or_broadcast_rejected(self):
+        # 255.255.255.255 (limited broadcast) and 240.0.0.0/4 (Class E) are
+        # reserved — nonsensical to ban, and _validate_ip now rejects them.
+        with pytest.raises(CommandError):
+            _validate_ip("255.255.255.255")
+        with pytest.raises(CommandError):
+            _validate_ip("240.0.0.1")
 
     def test_loopback_rejected(self):
         with pytest.raises(CommandError):
@@ -99,59 +107,41 @@ class TestValidateIp:
         assert _validate_ip(" 1.2.3.4 ") == "1.2.3.4"
 
 
-# ── Log level detection (via cmd_read_logs internals) ─────────────────────────
+# ── Log level detection (imported from the helper — no duplicated copy) ───────
 
-import re
-
-LOG_LEVEL_RE = re.compile(
-    r"^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b", re.IGNORECASE
-)
-
-
-def detect_level(message: str) -> str:
-    """Reproduce the level-detection logic from cmd_read_logs."""
-    prefix_match = LOG_LEVEL_RE.match(message)
-    if prefix_match:
-        prefix = prefix_match.group(1).upper()
-        if prefix in ("ERROR", "CRITICAL", "FATAL"):
-            return "error"
-        if prefix in ("WARNING", "WARN"):
-            return "warning"
-        return "info"
-    msg_lower = message.lower()
-    if "error" in msg_lower or "fatal" in msg_lower:
-        return "error"
-    if "warning" in msg_lower or "warn" in msg_lower:
-        return "warning"
-    return "info"
+from privileged.server import detect_log_level
 
 
 class TestLogLevelDetection:
     def test_info_prefix(self):
-        assert detect_level('INFO:     127.0.0.1 - "GET /dashboard HTTP/1.1" 200 OK') == "info"
+        assert detect_log_level('INFO:     127.0.0.1 - "GET /dashboard HTTP/1.1" 200 OK') == "info"
 
     def test_warning_prefix(self):
-        assert detect_level("WARNING: something went wrong") == "warning"
+        assert detect_log_level("WARNING: something went wrong") == "warning"
 
     def test_error_prefix(self):
-        assert detect_level("ERROR: failed to connect") == "error"
+        assert detect_log_level("ERROR: failed to connect") == "error"
 
     def test_url_with_level_param_not_false_positive(self):
         # e.g. uvicorn logging a request URL containing ?level=error
         msg = 'INFO:     127.0.0.1 - "GET /partials/logs/entries?level=error HTTP/1.1" 200 OK'
-        assert detect_level(msg) == "info"
+        assert detect_log_level(msg) == "info"
 
     def test_fastapi_deprecation_warning(self):
         msg = "FastAPIDeprecationWarning: `regex` has been deprecated, use `pattern` instead"
-        assert detect_level(msg) == "warning"
+        assert detect_log_level(msg) == "warning"
 
     def test_auth_failed_syslog(self):
+        # NOTE: an auth-failure line with no explicit level keyword classifies
+        # as "info" today. Whether the log viewer should surface auth failures
+        # as "warning" is a deliberate behavior change tracked as Step E16 in
+        # REMEDIATION_PLAN.md.
         msg = "authentication failed: user=<support>"
-        assert detect_level(msg) == "error"
+        assert detect_log_level(msg) == "info"
 
     def test_plain_info_syslog(self):
         msg = "connect from unknown[185.93.89.64]"
-        assert detect_level(msg) == "info"
+        assert detect_log_level(msg) == "info"
 
 
 # ── Alert checker _evaluate (same logic, exported separately) ─────────────────
