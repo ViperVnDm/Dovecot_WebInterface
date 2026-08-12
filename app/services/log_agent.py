@@ -36,7 +36,27 @@ SETTING_AGENT_DAILY_COST_DATE = "log_agent_daily_cost_date"
 SETTING_AGENT_AUTO_BAN_ENABLED = "log_agent_auto_ban_enabled"
 SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE = "log_agent_auto_ban_min_confidence"
 
-DEFAULT_AUTO_BAN_MIN_CONFIDENCE = 80
+# Raised from 80 after measuring the confidence distribution over 5,096 real
+# suggestions: approved ones averaged 79.2, *rejected* ones 76.0. A 3-point
+# gap means confidence alone barely predicts whether an operator agrees, so it
+# is now a secondary filter behind the evidence gate below rather than the
+# sole condition for applying a firewall rule unattended.
+DEFAULT_AUTO_BAN_MIN_CONFIDENCE = 90
+
+# Evidence floor for unattended bans. The model's self-reported confidence can
+# be talked up by the log text itself; these come from our own aggregation of
+# the logs and cannot be influenced by what an attacker writes into them.
+AUTO_BAN_MIN_EVENTS = 5
+# Services where a connection attempt means credentials were actually tried
+# against something listening. spamd is content scanning and ufw is packets
+# already dropped at a closed port — neither justifies an unattended ban.
+AUTO_BAN_AUTH_SERVICES = frozenset({"ssh", "postfix", "dovecot"})
+
+# Serialises run_once(). "Run now" spawns a bare task and the background loop
+# fires on its own schedule; without this, two runs can gather concurrently,
+# both advance the same watermarks, and each triage a window the other already
+# claimed — while double-spending against the daily cost cap.
+_run_lock = asyncio.Lock()
 
 # Per-source watermark keys — store the last log line we processed so the
 # next run picks up only what's new.
@@ -241,6 +261,44 @@ async def _ip_prior_ban_counts(db, ips: set[str]) -> dict[str, int]:
     return {row[0]: row[1] for row in result.all()}
 
 
+def qualifies_for_auto_ban(
+    suggestion: Suggestion,
+    summary: IPSummary | None,
+    base_confidence: int,
+    threshold: int,
+    allowlist: list[str],
+) -> tuple[bool, str]:
+    """Decide whether a suggestion may be applied without a human.
+
+    Pure function so the policy can be unit-tested without the DB or helper.
+    Returns (allowed, reason) — reason explains the refusal when allowed is
+    False, for the log line.
+
+    ``base_confidence`` is the model's own number *before* the repeat-offender
+    boost. The boost is a presentation aid for the operator; letting it push a
+    suggestion over the unattended-action threshold would mean an IP gets
+    banned for having been suggested before rather than for what it did in
+    this window.
+    """
+    if suggestion.action != "ban":
+        return False, "not a ban"
+    if "/" in suggestion.target:
+        return False, "CIDR ranges always need review"
+    if is_allowlisted(suggestion.target, allowlist):
+        return False, "target is allowlisted"
+    if summary is None:
+        # No aggregation backing this target — it did not come from this
+        # batch. triage_ips already drops these; belt and braces.
+        return False, "no evidence summary for target"
+    if summary.total_events < AUTO_BAN_MIN_EVENTS:
+        return False, f"only {summary.total_events} events (need {AUTO_BAN_MIN_EVENTS})"
+    if not (set(summary.services_touched) & AUTO_BAN_AUTH_SERVICES):
+        return False, f"no auth-bearing service touched ({', '.join(summary.services_touched)})"
+    if base_confidence < threshold:
+        return False, f"confidence {base_confidence} below threshold {threshold}"
+    return True, ""
+
+
 async def _expire_old_suggestions(db) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=SUGGESTION_EXPIRY_DAYS)
     result = await db.execute(
@@ -255,11 +313,31 @@ async def _expire_old_suggestions(db) -> int:
 # ── Run orchestration ────────────────────────────────────────────────────────
 
 
-async def _gather_log_entries() -> list[dict]:
+async def _persist_markers(new_markers: dict[str, str]) -> None:
+    """Commit the per-source watermarks so the next run starts after them.
+
+    Deliberately *not* called from _gather_log_entries. Advancing the markers
+    is the act of saying "these lines are handled", and that is only true once
+    triage has actually produced suggestions. Committing at gather time meant
+    any later failure — an expired API key, a 429, a parse error — silently
+    dropped that window of logs forever, with the run row showing nothing but
+    a zero suggestion count. See run_once.
+    """
+    if not new_markers:
+        return
+    async with async_session() as db:
+        for name, value in new_markers.items():
+            await _set_setting(db, SETTING_MARKER_PREFIX + name, value)
+        await db.commit()
+
+
+async def _gather_log_entries() -> tuple[list[dict], dict[str, str]]:
     """Pull recent log entries from every source the agent watches.
 
     Each source uses a persistent watermark (last line seen) so subsequent
-    runs only process new lines. Markers are stored in ``app_settings``.
+    runs only process new lines. Returns the entries alongside the *proposed*
+    new watermarks; the caller persists them via _persist_markers() once the
+    run has succeeded.
     """
     helper = get_helper_client()
     all_entries: list[dict] = []
@@ -301,14 +379,7 @@ async def _gather_log_entries() -> list[dict]:
         except PrivilegedHelperError as exc:
             logger.warning("read for %s failed: %s", name, exc.message)
 
-    # Persist watermarks so the next run picks up only what's new.
-    if new_markers:
-        async with async_session() as db:
-            for name, value in new_markers.items():
-                await _set_setting(db, SETTING_MARKER_PREFIX + name, value)
-            await db.commit()
-
-    return all_entries
+    return all_entries, new_markers
 
 
 async def run_once(force: bool = False) -> LogAgentRun:
@@ -333,7 +404,11 @@ async def run_once(force: bool = False) -> LogAgentRun:
         await db.refresh(run)
 
     skip_reason: str | None = None
-    if not force and not enabled:
+    if _run_lock.locked():
+        # Both callers live on one event loop, so the gap between this check
+        # and the acquire below has no await point and cannot interleave.
+        skip_reason = "another run is already in progress"
+    elif not force and not enabled:
         skip_reason = "agent disabled"
     elif cost_today >= cap:
         skip_reason = f"daily cost cap reached (${cost_today:.4f} >= ${cap:.4f})"
@@ -350,6 +425,16 @@ async def run_once(force: bool = False) -> LogAgentRun:
             logger.info("Agent run skipped: %s", skip_reason)
             return row
 
+    async with _run_lock:
+        return await _execute_run(run)
+
+
+async def _execute_run(run: LogAgentRun) -> LogAgentRun:
+    """Body of a single agent iteration, once the guards have passed.
+
+    Split out of run_once so the lock wraps exactly the part that reads logs
+    and spends money.
+    """
     helper = get_helper_client()
 
     # Gather + pre-filter. If the helper can't be reached (socket perms,
@@ -357,7 +442,7 @@ async def run_once(force: bool = False) -> LogAgentRun:
     # letting the exception propagate — otherwise finished_at never gets
     # set and the UI shows the run as "running" forever.
     try:
-        raw_entries = await _gather_log_entries()
+        raw_entries, new_markers = await _gather_log_entries()
     except Exception as exc:
         logger.exception("log gathering failed")
         async with async_session() as db:
@@ -397,12 +482,23 @@ async def run_once(force: bool = False) -> LogAgentRun:
     usage = TokenUsage()
     model = settings.log_agent_model
     error: str | None = None
+    stop_reason: str | None = None
     if summaries:
         try:
-            suggestions, usage, model = await triage_ips(summaries)
+            suggestions, usage, model, stop_reason = await triage_ips(summaries)
         except Exception as exc:  # network / SDK / parse errors
             logger.exception("triage_ips failed")
             error = f"{type(exc).__name__}: {exc}"
+
+    if error is None and stop_reason == "max_tokens":
+        # The tool_use block was cut mid-JSON, so the parse above is short or
+        # empty. Record it on the run row: a truncated run previously looked
+        # identical to a quiet one in the UI.
+        error = "output truncated at max_tokens — suggestions may be incomplete"
+
+    # The model's own number, kept before the repeat-offender boost below.
+    # qualifies_for_auto_ban() gates on this rather than the boosted value.
+    base_confidence = {s.target: s.confidence for s in suggestions}
 
     # Boost confidence for repeat offenders: +10% per prior ban suggestion,
     # capped at 95. Annotate the evidence so the admin can see why.
@@ -420,6 +516,7 @@ async def run_once(force: bool = False) -> LogAgentRun:
     # Persist suggestions + run record + cost
     inserted = 0
     auto_approved = 0
+    summary_by_ip = {s.ip: s for s in summaries}
     async with async_session() as db:
         auto_ban_enabled = await _is_auto_ban_enabled(db)
         auto_ban_threshold = await _auto_ban_min_confidence(db)
@@ -445,21 +542,25 @@ async def run_once(force: bool = False) -> LogAgentRun:
                 continue
 
             applied = False
-            if (
-                auto_ban_enabled
-                and s.action == "ban"
-                and s.confidence >= auto_ban_threshold
-                and "/" not in s.target
-                and not is_allowlisted(s.target, allowlist)
-            ):
-                try:
-                    await helper.ban_ip(s.target)
-                    applied = True
-                except PrivilegedHelperError as exc:
-                    logger.warning(
-                        "auto-ban failed for %s: %s — leaving as pending",
-                        s.target, exc.message,
-                    )
+            if auto_ban_enabled:
+                allowed, refusal = qualifies_for_auto_ban(
+                    s,
+                    summary_by_ip.get(s.target),
+                    base_confidence.get(s.target, s.confidence),
+                    auto_ban_threshold,
+                    allowlist,
+                )
+                if allowed:
+                    try:
+                        await helper.ban_ip(s.target)
+                        applied = True
+                    except PrivilegedHelperError as exc:
+                        logger.warning(
+                            "auto-ban failed for %s: %s — leaving as pending",
+                            s.target, exc.message,
+                        )
+                elif s.action == "ban":
+                    logger.info("auto-ban declined for %s: %s", s.target, refusal)
 
             sug_row = BanSuggestion(
                 target=s.target,
@@ -504,7 +605,17 @@ async def run_once(force: bool = False) -> LogAgentRun:
             "Agent run %d done: lines=%d ips=%d suggestions=%d auto_approved=%d cost=$%.4f",
             row.id, row.lines_analyzed, len(summaries), inserted, auto_approved, row.cost_usd,
         )
-        return row
+
+    # Only now consume the log window. If triage failed, the markers stay put
+    # and the next run re-reads the same lines instead of losing them.
+    if error is None:
+        await _persist_markers(new_markers)
+    else:
+        logger.warning(
+            "Run %d failed (%s) — watermarks left unchanged so %d line(s) are re-read next run",
+            run.id, error, len(raw_entries),
+        )
+    return row
 
 
 async def agent_loop() -> None:

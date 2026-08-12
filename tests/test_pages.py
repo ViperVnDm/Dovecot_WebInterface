@@ -7,7 +7,7 @@ context) — important because the Phase D UI edits aren't otherwise unit-tested
 import pytest
 
 PAGES = [
-    "/dashboard", "/users", "/queue", "/logs",
+    "/dashboard", "/users", "/queue", "/logs", "/firewall",
     "/storage", "/alerts", "/agent", "/audit",
 ]
 

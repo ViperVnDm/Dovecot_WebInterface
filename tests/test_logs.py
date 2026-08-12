@@ -243,3 +243,76 @@ async def test_export_ip_lists(auth_client):
     assert "192.168.1.0/24" in body
     assert "Banned" in body
     assert "Never-Ban" in body
+
+
+# ── Firewall page partials ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_banned_partial_search_filters_and_counts(auth_client):
+    ac, mock_helper = auth_client
+    mock_helper.list_banned_ips.return_value = ["1.2.3.4", "5.6.7.8", "1.2.3.99"]
+
+    resp = await ac.get("/partials/firewall/banned", params={"q": "1.2.3."})
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert "1.2.3.4" in body
+    assert "1.2.3.99" in body
+    assert "5.6.7.8" not in body
+    assert "2 of 3" in body
+
+
+@pytest.mark.asyncio
+async def test_banned_partial_caps_long_lists(auth_client):
+    from app.api.partials import BANNED_LIST_LIMIT
+
+    ac, mock_helper = auth_client
+    mock_helper.list_banned_ips.return_value = [
+        f"10.0.{i // 256}.{i % 256}" for i in range(BANNED_LIST_LIMIT + 50)
+    ]
+
+    resp = await ac.get("/partials/firewall/banned")
+
+    assert resp.status_code == 200
+    assert f"Showing the first {BANNED_LIST_LIMIT}" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_banned_partial_shows_why_an_ip_was_banned(auth_client, db_engine):
+    """The approved suggestion behind a ban is surfaced next to the entry."""
+    from datetime import datetime, timezone
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.database import BanSuggestion
+
+    ac, mock_helper = auth_client
+    mock_helper.list_banned_ips.return_value = ["4.4.4.4"]
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        db.add(BanSuggestion(
+            target="4.4.4.4", action="ban", confidence=93,
+            reason="Repeated SMTP AUTH failures",
+            status="approved",
+            reviewed_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+    resp = await ac.get("/partials/firewall/banned")
+
+    assert resp.status_code == 200
+    assert "Repeated SMTP AUTH failures" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_logs_partial_paths_still_work(auth_client):
+    """Old /partials/logs/* URLs keep working for one release."""
+    ac, mock_helper = auth_client
+    mock_helper.list_banned_ips.return_value = ["7.7.7.7"]
+
+    banned = await ac.get("/partials/logs/banned")
+    allowlist = await ac.get("/partials/logs/allowlist")
+
+    assert banned.status_code == 200
+    assert "7.7.7.7" in banned.text
+    assert allowlist.status_code == 200

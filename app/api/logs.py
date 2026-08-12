@@ -185,14 +185,12 @@ async def ban_ip(
     )
     await db.commit()
 
-    # Return updated banned IPs list for HTMX
-    try:
-        banned_ips = await helper.list_banned_ips()
-    except PrivilegedHelperError:
-        banned_ips = []
+    # Return the updated banned list for HTMX. Shares the partial's context
+    # builder so the search/annotation view stays consistent after a change.
+    from app.api.partials import _banned_context
     return templates.TemplateResponse(
         request, "partials/logs_banned.html",
-        context={"banned_ips": banned_ips},
+        context=await _banned_context(db, ""),
     )
 
 
@@ -216,14 +214,12 @@ async def unban_ip(
     )
     await db.commit()
 
-    # Return updated banned IPs list for HTMX
-    try:
-        banned_ips = await helper.list_banned_ips()
-    except PrivilegedHelperError:
-        banned_ips = []
+    # Return the updated banned list for HTMX. Shares the partial's context
+    # builder so the search/annotation view stays consistent after a change.
+    from app.api.partials import _banned_context
     return templates.TemplateResponse(
         request, "partials/logs_banned.html",
-        context={"banned_ips": banned_ips},
+        context=await _banned_context(db, ""),
     )
 
 

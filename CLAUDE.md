@@ -50,6 +50,21 @@ UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 add
 
 **Export:** `GET /api/logs/export` returns a plain text file (attachment) containing both the banned IPs/CIDRs and the never-ban allowlist entries for disaster recovery backup.
 
+**UI:** both lists live on `/firewall` (`app/templates/firewall/index.html`), not on Logs & Stats — bans are firewall state, and the log viewer is observability. The partials are served from `/partials/firewall/{banned,allowlist}`; the older `/partials/logs/*` paths are aliases kept for one release. `_banned_context()` in `partials.py` is the single builder for the banned view (also used by the ban/unban handlers in `logs.py` so the list stays consistent after a change): it filters by substring `q`, caps the render at `BANNED_LIST_LIMIT` (the live server has >4,000 rules), and annotates each shown entry with the reason/confidence/approver from the matching approved `BanSuggestion`.
+
+### Log-Triage Agent
+
+`app/services/log_agent.py` (orchestration) + `app/services/llm_client.py` (Anthropic call). Runs on a DB-configured interval, groups new log lines per source IP, asks Claude Haiku 4.5 to triage them, and writes `BanSuggestion` rows for review at `/agent`.
+
+Four invariants worth not breaking:
+
+- **Watermarks commit only on success.** `_gather_log_entries()` *returns* proposed `log_agent_marker_*` values; `_execute_run()` calls `_persist_markers()` only when `error is None`. Committing at gather time (the original behaviour) silently discarded the whole log window whenever the LLM call failed — the run row looked identical to a quiet period. Truncation at `max_tokens` counts as a failure for this purpose.
+- **Suggestions are constrained to the input batch.** `triage_ips()` drops any returned IP that was not a key of `by_ip`. Log lines contain attacker-controlled text (SASL usernames, HELO strings, SSH login names) and auto-ban turns model output into a `ufw deny`, so an off-batch target is treated as an injection attempt, not a decision. Sample lines are also sanitised (`_sanitize_log_line`) and fenced in a `<log_evidence>` block the system prompt names as untrusted.
+- **Auto-ban gates on evidence, not confidence.** `qualifies_for_auto_ban()` (pure, unit-tested) requires `AUTO_BAN_MIN_EVENTS` events and at least one service in `AUTO_BAN_AUTH_SERVICES`, with confidence as a secondary filter. It uses the model's *base* confidence, before the repeat-offender boost — the boost is an operator-facing signal and must not by itself cross the unattended-action threshold. Measured over 5,096 real suggestions, approved ones averaged 79.2 confidence and rejected ones 76.0, which is why confidence alone is not a sufficient gate.
+- **No prompt caching.** Haiku 4.5 needs a 4096-token minimum cacheable prefix; this system prompt is ~600 tokens, so a `cache_control` breakpoint is silently ignored (it never produced a cache read in three months of production runs) and the 8-hour interval is far past the ephemeral TTL anyway. `test_request_does_not_ask_for_prompt_caching` guards against reinstating it.
+
+`_run_lock` serialises `run_once()` — "Run now" spawns a bare task and the background loop fires on its own schedule; concurrent runs would double-consume watermarks and double-spend the daily cost cap.
+
 ### Log Reading
 `privileged/server.py` reads logs via:
 - **Postfix/Dovecot/SpamAssassin:** Full `/var/log/mail.log` read + Python-side service filter (not `tail`, because `tail` misses sparse services)
@@ -120,6 +135,10 @@ If a new module imports `get_helper_client`, add it to the patch list in `confte
 | `LOGIN_RATE_LIMIT` | `5/minute` | slowapi rate limit string |
 | `HELPER_SOCKET_PATH` | `/run/dovecot-webadmin/helper.sock` | |
 | `MAIL_LOG_PATH` | `/var/log/mail.log` | |
+| `ANTHROPIC_API_KEY` | *(empty)* | Log-triage agent; runs are skipped when unset |
+| `LOG_AGENT_MODEL` | `claude-haiku-4-5` | Alias, not a dated snapshot, so it survives rotation |
+| `LOG_AGENT_DAILY_COST_CAP_USD` | `1.0` | Checked before a run, so a run can overshoot slightly |
+| `LOG_AGENT_MAX_IPS_PER_RUN` | `50` | Bounds prompt size and output length |
 
 Runtime settings (SMTP config, alert interval, IP allowlist) are stored in the `app_settings` DB table, not in `.env`.
 

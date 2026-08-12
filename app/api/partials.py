@@ -10,7 +10,14 @@ from sqlalchemy.orm import selectinload
 
 from app.core.security import get_current_user
 from app.core.permissions import get_helper_client, PrivilegedHelperError
-from app.database import get_db, AdminUser, AlertRule, AlertHistory, AuditLog
+from app.database import (
+    get_db,
+    AdminUser,
+    AlertRule,
+    AlertHistory,
+    AuditLog,
+    BanSuggestion,
+)
 from app.templates_setup import templates
 
 logger = logging.getLogger(__name__)
@@ -295,21 +302,71 @@ async def logs_stats(
     )
 
 
-@router.get("/logs/banned")
-async def logs_banned(
-    request: Request,
-    current_user: AdminUser = Depends(get_current_user),
-):
-    """Banned IP list."""
+# The banned list is thousands of entries on a server that has been running a
+# while, so it is filtered and capped rather than rendered whole.
+BANNED_LIST_LIMIT = 200
+
+
+async def _banned_context(db: AsyncSession, q: str) -> dict:
+    """Build the banned-IP view: filter, cap, and annotate with why/when."""
     helper = get_helper_client()
     try:
         banned_ips = await helper.list_banned_ips()
     except PrivilegedHelperError:
         banned_ips = []
 
+    total = len(banned_ips)
+    query = (q or "").strip()
+    if query:
+        banned_ips = [ip for ip in banned_ips if query in ip]
+    matched = len(banned_ips)
+    shown = banned_ips[:BANNED_LIST_LIMIT]
+
+    # Annotate only what we render — "why is this banned?" is the question
+    # people bring to this page, and the answer is already in the suggestion
+    # the agent or an operator approved.
+    details: dict[str, dict] = {}
+    if shown:
+        rows = (await db.execute(
+            select(BanSuggestion, AdminUser.username)
+            .outerjoin(AdminUser, BanSuggestion.reviewed_by == AdminUser.id)
+            .where(
+                BanSuggestion.target.in_(shown),
+                BanSuggestion.status == "approved",
+            )
+            .order_by(BanSuggestion.reviewed_at.desc())
+        )).all()
+        for suggestion, username in rows:
+            # Ordered newest-first, so the first hit per target wins.
+            details.setdefault(suggestion.target, {
+                "reason": suggestion.reason,
+                "confidence": suggestion.confidence,
+                "reviewed_at": suggestion.reviewed_at,
+                "reviewed_by": username or "agent",
+            })
+
+    return {
+        "banned_ips": shown,
+        "details": details,
+        "total": total,
+        "matched": matched,
+        "truncated": matched > len(shown),
+        "limit": BANNED_LIST_LIMIT,
+        "q": query,
+    }
+
+
+@router.get("/logs/banned")
+async def logs_banned(
+    request: Request,
+    q: str = "",
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Banned IP list, optionally filtered by substring."""
     return templates.TemplateResponse(
         request, "partials/logs_banned.html",
-        context={"banned_ips": banned_ips},
+        context=await _banned_context(db, q),
     )
 
 
@@ -326,6 +383,32 @@ async def logs_allowlist(
         request, "partials/logs_allowlist.html",
         context={"allowlist": allowlist},
     )
+
+
+# Aliases matching the Firewall page these partials now live on. The /logs/*
+# paths stay for one release so any open tab or bookmark keeps working.
+
+
+@router.get("/firewall/banned")
+async def firewall_banned(
+    request: Request,
+    q: str = "",
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return templates.TemplateResponse(
+        request, "partials/logs_banned.html",
+        context=await _banned_context(db, q),
+    )
+
+
+@router.get("/firewall/allowlist")
+async def firewall_allowlist(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await logs_allowlist(request, current_user=current_user, db=db)
 
 
 @router.get("/logs/entries")

@@ -154,6 +154,19 @@ async def logs_page(
     )
 
 
+@app.get("/firewall")
+async def firewall_page(
+    request: Request,
+    current_user: AdminUser = Depends(get_current_user),
+):
+    """Banned IPs and the never-ban allowlist."""
+    return templates.TemplateResponse(
+        request,
+        "firewall/index.html",
+        {"title": "Firewall", "current_user": current_user},
+    )
+
+
 @app.get("/storage")
 async def storage_page(
     request: Request,

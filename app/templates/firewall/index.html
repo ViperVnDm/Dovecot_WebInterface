@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page header -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Firewall</h1>
+            <p class="text-sm text-gray-500 mt-0.5">
+                UFW deny rules and the addresses that must never be banned.
+            </p>
+        </div>
+        <a href="/api/logs/export"
+           class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors inline-flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Export IP Lists
+        </a>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <!-- Banned IPs -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Banned IPs</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">Blocked by UFW, newest rules first</p>
+                </div>
+                <button hx-get="/partials/firewall/banned"
+                        hx-target="#banned-ips-list"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800">Refresh</button>
+            </div>
+            <div id="banned-ips-list"
+                 class="p-4"
+                 hx-get="/partials/firewall/banned"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
+        </div>
+
+        <!-- Never-ban allowlist -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-4 py-3 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Never-Ban List</h2>
+                <p class="text-xs text-gray-500 mt-0.5">
+                    These are never banned — not by you, not by the agent
+                </p>
+            </div>
+            <div class="p-4"
+                 hx-get="/partials/firewall/allowlist"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

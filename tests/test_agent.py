@@ -150,7 +150,7 @@ async def test_run_once_creates_suggestions_with_stub_llm(auth_client, db_engine
     )
 
     async def fake_triage(grouped):
-        return [fake_suggestion], TokenUsage(input_tokens=100, output_tokens=50), "test-model"
+        return [fake_suggestion], TokenUsage(input_tokens=100, output_tokens=50), "test-model", "end_turn"
 
     # Bypass the api-key gate so the LLM path runs, and point log_agent at
     # the test in-memory DB so the suggestion shows up via the API.
@@ -336,7 +336,7 @@ async def _run_with_single_suggestion(
             await db.commit()
 
     async def fake_triage(grouped):
-        return [suggestion], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+        return [suggestion], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "end_turn"
 
     ip = log_entry_ip or suggestion.target
     mock_helper.read_logs_with_marker.return_value = (
@@ -530,7 +530,7 @@ async def test_confidence_boosted_for_repeat_offender(auth_client, db_engine):
     async def fake_triage(grouped):
         captured.extend(grouped)
         sug = Suggestion(target="5.5.5.5", action="ban", confidence=70, reason="ssh brute")
-        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "end_turn"
 
     with patch("app.services.log_agent.async_session", factory), \
          patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
@@ -554,13 +554,19 @@ async def test_confidence_boosted_for_repeat_offender(auth_client, db_engine):
 
 
 @pytest.mark.asyncio
-async def test_confidence_boost_triggers_auto_approve(auth_client, db_engine):
-    """Repeat offender whose boosted confidence clears the threshold is auto-banned."""
+async def test_confidence_boost_does_not_trigger_auto_ban(auth_client, db_engine):
+    """The repeat-offender boost must not push a suggestion over the auto-ban bar.
+
+    The boost is an operator-facing signal. Gating unattended firewall changes
+    on it would mean an IP gets banned for having been suggested before rather
+    than for what it did in the window under review.
+    """
     from sqlalchemy.ext.asyncio import async_sessionmaker
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
     ac, mock_helper = auth_client
 
-    # 1 prior expired suggestion → +10% boost → 70+10 = 80 → meets threshold of 80.
+    # 1 prior expired suggestion → +10 boost → 70+10 = 80 → would have met the
+    # threshold of 80 under the old policy.
     async with factory() as db:
         prior = BanSuggestion(
             target="6.6.6.6", action="ban", confidence=70, reason="prior",
@@ -580,14 +586,209 @@ async def test_confidence_boost_triggers_auto_approve(auth_client, db_engine):
 
     async def fake_triage(grouped):
         sug = Suggestion(target="6.6.6.6", action="ban", confidence=70, reason="ssh brute")
-        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model"
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "end_turn"
 
     with patch("app.services.log_agent.async_session", factory), \
          patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
          patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
         await log_agent.run_once(force=True)
 
-    mock_helper.ban_ip.assert_awaited_with("6.6.6.6")
+    mock_helper.ban_ip.assert_not_awaited()
+
+    # It still lands for review, with the boosted confidence shown.
+    async with factory() as db:
+        row = (await db.execute(
+            select(BanSuggestion).where(
+                BanSuggestion.target == "6.6.6.6",
+                BanSuggestion.status == "pending",
+            )
+        )).scalar_one()
+        assert row.confidence == 80
+
+
+@pytest.mark.asyncio
+async def test_auto_ban_applies_when_evidence_and_confidence_both_clear(auth_client, db_engine):
+    """A well-evidenced, high-confidence ban is still applied unattended."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        db.add(AppSetting(key=log_agent.SETTING_AGENT_AUTO_BAN_ENABLED, value="true"))
+        db.add(AppSetting(key=log_agent.SETTING_AGENT_AUTO_BAN_MIN_CONFIDENCE, value="90"))
+        await db.commit()
+
+    mock_helper.read_logs_with_marker.return_value = (
+        [{"ips": ["7.7.7.7"], "message": "SASL LOGIN failed", "service": "postfix"}] * 6,
+        "marker",
+    )
+    mock_helper.list_banned_ips.return_value = []
+
+    async def fake_triage(grouped):
+        sug = Suggestion(target="7.7.7.7", action="ban", confidence=95, reason="smtp auth brute")
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "end_turn"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        await log_agent.run_once(force=True)
+
+    mock_helper.ban_ip.assert_awaited_with("7.7.7.7")
+
+
+# ── Watermarks ───────────────────────────────────────────────────────────────
+
+
+def _seed_log_source(mock_helper, ip="9.9.9.9", count=6, marker="new-marker"):
+    mock_helper.read_logs_with_marker.return_value = (
+        [{"ips": [ip], "message": "SASL LOGIN failed", "service": "postfix"}] * count,
+        marker,
+    )
+    mock_helper.list_banned_ips.return_value = []
+
+
+@pytest.mark.asyncio
+async def test_watermarks_not_advanced_when_triage_fails(auth_client, db_engine):
+    """A failed run must leave the log window unconsumed.
+
+    This is the bug that silently discarded eight hours of logs every time the
+    API call failed: the markers were committed at gather time, so the next run
+    started after lines nothing had ever triaged.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+    _seed_log_source(mock_helper)
+
+    async def boom(grouped):
+        raise RuntimeError("credit balance is too low")
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=boom), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        run = await log_agent.run_once(force=True)
+
+    assert "RuntimeError" in run.error
+    async with factory() as db:
+        marker = await log_agent._get_setting(
+            db, log_agent.SETTING_MARKER_PREFIX + "mail_postfix"
+        )
+    assert marker is None, "watermark advanced despite the run failing"
+
+
+@pytest.mark.asyncio
+async def test_watermarks_advanced_on_success(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+    _seed_log_source(mock_helper)
+
+    async def fake_triage(grouped):
+        sug = Suggestion(target="9.9.9.9", action="ban", confidence=95, reason="brute")
+        return [sug], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "end_turn"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        run = await log_agent.run_once(force=True)
+
+    assert run.error is None
+    async with factory() as db:
+        marker = await log_agent._get_setting(
+            db, log_agent.SETTING_MARKER_PREFIX + "mail_postfix"
+        )
+    assert marker == "new-marker"
+
+
+@pytest.mark.asyncio
+async def test_truncated_output_is_recorded_on_the_run(auth_client, db_engine):
+    """A run cut short at max_tokens must not look like a quiet one."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+    _seed_log_source(mock_helper)
+
+    async def fake_triage(grouped):
+        return [], TokenUsage(input_tokens=10, output_tokens=5), "test-model", "max_tokens"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        run = await log_agent.run_once(force=True)
+
+    assert "truncated" in run.error
+    # Truncation is a failure, so the window is not consumed either.
+    async with factory() as db:
+        marker = await log_agent._get_setting(
+            db, log_agent.SETTING_MARKER_PREFIX + "mail_postfix"
+        )
+    assert marker is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_run_is_refused(auth_client, db_engine):
+    """The second caller is turned away rather than double-consuming the window."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+    _seed_log_source(mock_helper)
+
+    with patch("app.services.log_agent.async_session", factory):
+        await log_agent._run_lock.acquire()
+        try:
+            run = await log_agent.run_once(force=True)
+        finally:
+            log_agent._run_lock.release()
+
+    assert run.error == "another run is already in progress"
+    mock_helper.read_logs_with_marker.assert_not_awaited()
+
+
+# ── Auto-ban policy (pure) ───────────────────────────────────────────────────
+
+
+def _summary(ip="1.2.3.4", events=10, services=("postfix",)):
+    return IPSummary(
+        ip=ip,
+        total_events=events,
+        services_touched=list(services),
+        time_range="a → b",
+        sample_lines=["evidence"],
+    )
+
+
+def _ban(ip="1.2.3.4", confidence=95):
+    return Suggestion(target=ip, action="ban", confidence=confidence, reason="r")
+
+
+@pytest.mark.parametrize(
+    "suggestion, summary, base_conf, allowlist, expected",
+    [
+        (_ban(), _summary(), 95, [], True),
+        # Thin evidence: a couple of stray failures is not an unattended ban.
+        (_ban(), _summary(events=3), 95, [], False),
+        # UFW-only traffic was already dropped at a closed port.
+        (_ban(), _summary(services=("ufw",)), 95, [], False),
+        # spamd is content scanning, not an authentication surface.
+        (_ban(), _summary(services=("spamd",)), 95, [], False),
+        # Confidence still applies, as a secondary filter.
+        (_ban(confidence=95), _summary(), 60, [], False),
+        # Allowlisted targets never get banned, however strong the evidence.
+        (_ban(), _summary(), 95, ["1.2.3.4"], False),
+        # CIDR ranges are too blunt to apply without a human.
+        (_ban(ip="10.0.0.0/8"), _summary(ip="10.0.0.0/8"), 95, [], False),
+        # No aggregation backing the target — not from this batch.
+        (_ban(), None, 95, [], False),
+        # Non-ban actions are never auto-applied.
+        (Suggestion(target="1.2.3.4", action="allowlist", confidence=99, reason="r"),
+         _summary(), 99, [], False),
+    ],
+)
+def test_qualifies_for_auto_ban(suggestion, summary, base_conf, allowlist, expected):
+    allowed, reason = log_agent.qualifies_for_auto_ban(
+        suggestion, summary, base_conf, threshold=90, allowlist=allowlist
+    )
+    assert allowed is expected, reason
 
 
 # ── Approve-all-bans ─────────────────────────────────────────────────────────

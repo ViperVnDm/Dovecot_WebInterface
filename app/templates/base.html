@@ -141,6 +141,16 @@
                 Logs & Stats
             </a>
 
+            <a href="/firewall"
+               class="flex items-center px-4 py-3 hover:bg-gray-700 transition-colors
+                      {% if '/firewall' in request.url.path %}bg-gray-700 border-l-4 border-blue-500{% endif %}">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 12l2 2 4-4M12 3l8 4v5c0 4.42-3.05 8.44-8 9.8C7.05 20.44 4 16.42 4 12V7l8-4z"/>
+                </svg>
+                Firewall
+            </a>
+
             <a href="/storage"
                class="flex items-center px-4 py-3 hover:bg-gray-700 transition-colors
                       {% if '/storage' in request.url.path %}bg-gray-700 border-l-4 border-blue-500{% endif %}">

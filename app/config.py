@@ -56,7 +56,10 @@ class Settings(BaseSettings):
 
     # Log-triage agent (Anthropic)
     anthropic_api_key: str = ""
-    log_agent_model: str = "claude-haiku-4-5-20251001"
+    # Alias rather than a dated snapshot: both resolve today, but the alias
+    # survives snapshot rotation. Haiku is the right tier here — the task is
+    # bounded classification against a fixed schema with a human downstream.
+    log_agent_model: str = "claude-haiku-4-5"
     log_agent_daily_cost_cap_usd: float = 1.0
     log_agent_max_ips_per_run: int = 50
 
