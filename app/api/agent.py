@@ -54,6 +54,42 @@ router = APIRouter()
 
 # ── Suggestions list / approve / reject ──────────────────────────────────────
 
+# Sort options for the pending list. Keys are the accepted ?sort= values;
+# anything else falls back to the default rather than 400-ing, because the
+# value round-trips through user-editable URLs and a bad one should not break
+# the page.
+SUGGESTION_SORTS = ("network", "confidence", "newest", "oldest")
+DEFAULT_SUGGESTION_SORT = "network"
+
+
+def _network_key(target: str) -> tuple[int, int, int, int]:
+    """Numeric sort key for an IP or CIDR target.
+
+    A plain string sort does cluster shared prefixes correctly, but it orders
+    the groups nonsensically ("23.x" sorts after "195.x") and misorders within
+    a group (".9" after ".86"). ip_network gives true numeric order and handles
+    both bare IPs and CIDRs. Unparseable targets sort last instead of raising —
+    the column is free text as far as the database is concerned.
+    """
+    try:
+        net = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        return (1, 0, 0, 0)
+    return (0, net.version, int(net.network_address), net.prefixlen)
+
+
+def _requested_sort(request: Request) -> str:
+    """Read ?sort= off the request, falling back to the default when absent
+    or unrecognised.
+
+    Taken from the request rather than a function argument because the four
+    approve/reject handlers re-render the list by calling list_suggestions()
+    directly with their own Request; reading it here means their signatures do
+    not have to change.
+    """
+    value = request.query_params.get("sort", DEFAULT_SUGGESTION_SORT)
+    return value if value in SUGGESTION_SORTS else DEFAULT_SUGGESTION_SORT
+
 
 @router.get("/suggestions")
 async def list_suggestions(
@@ -61,11 +97,23 @@ async def list_suggestions(
     current_user: AdminUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """HTMX partial — pending suggestions, newest first."""
+    """HTMX partial — pending suggestions in the order given by ?sort=."""
+    sort = _requested_sort(request)
+
+    # Time ordering stays in SQL. The network/confidence sorts are then applied
+    # in Python on top of it: Python's sort is stable, so equal keys keep the
+    # recency order underneath, and comparing datetimes in Python is avoided
+    # entirely (SQLite has no native tz-aware type, so created_at can come back
+    # naive and would not compare against an aware value).
+    time_order = (
+        BanSuggestion.created_at.asc()
+        if sort == "oldest"
+        else desc(BanSuggestion.created_at)
+    )
     result = await db.execute(
         select(BanSuggestion)
         .where(BanSuggestion.status == "pending")
-        .order_by(desc(BanSuggestion.created_at))
+        .order_by(time_order)
     )
     rows = result.scalars().all()
     suggestions = []
@@ -83,10 +131,16 @@ async def list_suggestions(
             "evidence": evidence,
             "created_at": row.created_at,
         })
+
+    if sort == "network":
+        suggestions.sort(key=lambda s: _network_key(s["target"]))
+    elif sort == "confidence":
+        suggestions.sort(key=lambda s: s["confidence"], reverse=True)
+
     return templates.TemplateResponse(
         request,
         "partials/agent_suggestions.html",
-        context={"suggestions": suggestions},
+        context={"suggestions": suggestions, "sort": sort},
     )
 
 

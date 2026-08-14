@@ -36,10 +36,10 @@
             <h2 class="text-lg font-semibold text-gray-900">Pending Suggestions</h2>
         </div>
         <div id="agent-suggestions"
-             class="px-6 py-4"
-             hx-get="/api/agent/suggestions"
-             hx-trigger="load, every 30s"
-             hx-swap="innerHTML">
+              class="px-6 py-4"
+              hx-get="/api/agent/suggestions"
+              hx-trigger="load"
+              hx-swap="innerHTML">
             <p class="text-gray-500 text-sm">Loading...</p>
         </div>
     </div>

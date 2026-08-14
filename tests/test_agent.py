@@ -203,8 +203,8 @@ async def test_run_once_skipped_when_cost_cap_reached(auth_client, db_engine):
 # ── Approve / reject routes ──────────────────────────────────────────────────
 
 
-async def _create_pending(db, target: str, action: str = "ban") -> int:
-    sug = BanSuggestion(target=target, action=action, confidence=80, reason="test")
+async def _create_pending(db, target: str, action: str = "ban", *, confidence: int = 80) -> int:
+    sug = BanSuggestion(target=target, action=action, confidence=confidence, reason="test")
     db.add(sug)
     await db.commit()
     await db.refresh(sug)
@@ -837,3 +837,124 @@ async def test_settings_round_trip(auth_client):
     assert resp.status_code == 200
     assert b"checked" in resp.content
     assert b"15" in resp.content
+
+
+# ── Pending-list sort options ────────────────────────────────────────────────
+
+
+def _rendered_order(html: str, targets: list[str]) -> list[str]:
+    """Return targets ordered by where they appear in the rendered partial."""
+    return sorted(targets, key=html.index)
+
+
+async def _seed_sort_fixtures(factory):
+    """Three suggestions whose network order and confidence order differ."""
+    async with factory() as db:
+        await _create_pending(db, "195.96.139.186", confidence=85)
+        await _create_pending(db, "23.129.64.145", confidence=70)
+        await _create_pending(db, "185.220.100.246", confidence=95)
+    return ["195.96.139.186", "23.129.64.145", "185.220.100.246"]
+
+
+@pytest.mark.asyncio
+async def test_default_sort_is_numeric_network_order(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+    targets = await _seed_sort_fixtures(factory)
+
+    resp = await ac.get("/api/agent/suggestions")
+    assert resp.status_code == 200
+    # Numeric, not lexicographic: a string sort would put 23.x last.
+    assert _rendered_order(resp.text, targets) == [
+        "23.129.64.145",
+        "185.220.100.246",
+        "195.96.139.186",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sort_by_confidence_descending(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+    targets = await _seed_sort_fixtures(factory)
+
+    resp = await ac.get("/api/agent/suggestions?sort=confidence")
+    assert resp.status_code == 200
+    assert _rendered_order(resp.text, targets) == [
+        "185.220.100.246",
+        "195.96.139.186",
+        "23.129.64.145",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_sort_falls_back_to_default(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+    targets = await _seed_sort_fixtures(factory)
+
+    resp = await ac.get("/api/agent/suggestions?sort=; DROP TABLE")
+    assert resp.status_code == 200
+    assert _rendered_order(resp.text, targets) == [
+        "23.129.64.145",
+        "185.220.100.246",
+        "195.96.139.186",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sort_survives_a_reject(auth_client, db_engine):
+    """The re-rendered list after an action must keep the chosen sort."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+    await _seed_sort_fixtures(factory)
+
+    async with factory() as db:
+        sid = await _create_pending(db, "8.8.4.4", confidence=10)
+
+    resp = await ac.post(f"/api/agent/suggestions/{sid}/reject?sort=confidence")
+    assert resp.status_code == 200
+    remaining = ["195.96.139.186", "23.129.64.145", "185.220.100.246"]
+    assert _rendered_order(resp.text, remaining) == [
+        "185.220.100.246",
+        "195.96.139.186",
+        "23.129.64.145",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_poll_url_in_partial_carries_the_sort(auth_client, db_engine):
+    """Regression guard: the 30s refresh must not reset the sort to default."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+    await _seed_sort_fixtures(factory)
+
+    resp = await ac.get("/api/agent/suggestions?sort=oldest")
+    assert 'hx-get="/api/agent/suggestions?sort=oldest"' in resp.text
+
+
+def test_network_key_orders_numerically_and_tolerates_junk():
+    from app.api.agent import _network_key
+
+    targets = ["195.96.139.9", "23.129.64.145", "195.96.139.86", "not-an-ip"]
+    assert sorted(targets, key=_network_key) == [
+        "23.129.64.145",
+        "195.96.139.9",
+        "195.96.139.86",
+        "not-an-ip",
+    ]
+    # The two things a plain string sort gets wrong, and the reason this key
+    # exists: it puts 23.x last (since "2" > "1") and .86 before .9 (since
+    # "8" < "9"). Junk sorts last either way.
+    assert sorted(targets) == [
+        "195.96.139.86",
+        "195.96.139.9",
+        "23.129.64.145",
+        "not-an-ip",
+    ]
+

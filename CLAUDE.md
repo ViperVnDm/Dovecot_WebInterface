@@ -65,6 +65,10 @@ Four invariants worth not breaking:
 
 `_run_lock` serialises `run_once()` — "Run now" spawns a bare task and the background loop fires on its own schedule; concurrent runs would double-consume watermarks and double-spend the daily cost cap.
 
+**Pending-list sort.** `GET /api/agent/suggestions?sort=` accepts `network` (default), `confidence`, `newest`, `oldest`; an unknown value falls back to the default rather than 400-ing. `created_at` ordering is done in SQL and `network`/`confidence` are applied as a stable Python sort on top, so ties keep recency order and naive-vs-aware `datetime` comparisons never happen. Default is `network` because a run writes all its suggestions in one transaction — every pending row shares a timestamp to the millisecond, so `created_at` ordering is really just the model's output order, whereas numeric IP order puts same-subnet targets adjacent for review as one decision. Sort by `confidence` is offered but weak: the number shown includes the repeat-offender boost, and confidence barely separates approvals from rejections anyway (see above).
+
+The 30s auto-refresh lives on the **partial's root element**, not on the `#agent-suggestions` container in `logs/agent.html`, so the poll re-requests the current sort instead of resetting it. The root div wraps both branches of the `{% if suggestions %}` — without it on the empty branch the page would stop refreshing for good once the last suggestion is cleared. The four approve/reject handlers re-render by calling `list_suggestions(request, ...)` directly, so the sort round-trips via `?sort=` on their `hx-post` URLs and is read back off `request.query_params`; that is why those handlers need no `sort` parameter of their own.
+
 ### Log Reading
 `privileged/server.py` reads logs via:
 - **Postfix/Dovecot/SpamAssassin:** Full `/var/log/mail.log` read + Python-side service filter (not `tail`, because `tail` misses sparse services)
