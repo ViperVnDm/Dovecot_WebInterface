@@ -124,9 +124,10 @@ async def test_logout_clears_renamed_cookie(auth_client):
     assert ac.cookies.get("dwa_session"), "should be logged in"
     resp = await ac.post("/logout", follow_redirects=False)
     assert resp.status_code == 302
-    # Subsequent dashboard hit should require auth
+    # Subsequent dashboard hit should bounce to login
     resp2 = await ac.get("/dashboard", follow_redirects=False)
-    assert resp2.status_code == 401
+    assert resp2.status_code == 302
+    assert resp2.headers["location"] == "/login?next=%2Fdashboard"
 
 
 # ── Storage path traversal removed ──────────────────────────────────────────

@@ -3,8 +3,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.exception_handlers import http_exception_handler as _default_http_exception_handler
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -65,6 +67,45 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(HTTPException)
+async def unauthenticated_redirect(request: Request, exc: HTTPException):
+    """Redirect unauthenticated *plain* browser navigations to the login page.
+
+    Everything else keeps the JSON 401:
+
+    - `/api/*` and `/partials/*` are consumed by HTMX and API clients, never
+      typed into the address bar.
+    - HTMX requests — including the `hx-boost`ed nav links, which is every
+      in-app page link (see the `hx-boost="true"` on `<body>` in base.html) —
+      travel over XHR, and XHR follows a 302 invisibly. The browser would swap
+      the login page into the current layout while the URL bar still showed
+      `/users`. The 401 instead reaches the `htmx:responseError` handler in
+      base.html, which does a real top-level redirect.
+    - `/login` must never redirect to `/login`: POST /login answers a bad
+      password with a 401, and today it *returns* that response rather than
+      raising, so it misses this handler by luck rather than by design.
+
+    The requested path rides along as `?next=` so login lands the user where
+    they were headed. `login()` re-validates it before honouring it — see
+    `_safe_next()` in `app/api/auth.py`.
+    """
+    if (
+        exc.status_code == status.HTTP_401_UNAUTHORIZED
+        and not request.url.path.startswith(("/api/", "/partials/"))
+        and request.url.path != "/login"
+        and request.headers.get("hx-request") != "true"
+    ):
+        target = request.url.path
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(
+            url=f"/login?next={quote(target, safe='')}",
+            status_code=302,
+        )
+    return await _default_http_exception_handler(request, exc)
+
 
 # Security middleware (added in reverse order; CSRF runs before headers)
 app.add_middleware(SecurityHeadersMiddleware, hsts=not settings.debug)

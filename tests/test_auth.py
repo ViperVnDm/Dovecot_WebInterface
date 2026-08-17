@@ -1,5 +1,7 @@
 """Authentication tests."""
 
+from urllib.parse import quote
+
 import pytest
 from tests.conftest import TEST_USERNAME, TEST_PASSWORD
 
@@ -48,11 +50,136 @@ async def test_login_unknown_user_returns_401(client):
     assert resp.status_code == 401
 
 
+PAGES = [
+    "/dashboard", "/users", "/queue", "/logs", "/firewall",
+    "/storage", "/alerts", "/agent", "/audit",
+]
+
+
 @pytest.mark.asyncio
-async def test_dashboard_requires_auth(client):
+@pytest.mark.parametrize("path", PAGES)
+async def test_pages_redirect_to_login_when_unauthenticated(client, path):
     ac, _ = client
-    resp = await ac.get("/dashboard", follow_redirects=False)
+    resp = await ac.get(path, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"/login?next={quote(path, safe='')}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", PAGES)
+async def test_htmx_page_requests_keep_the_401(client, path):
+    """Boosted nav links (hx-boost on <body>) must NOT get the 302: XHR follows
+    it invisibly and htmx would swap the login page in under the old URL. The
+    401 is what reaches the htmx:responseError handler in base.html."""
+    ac, _ = client
+    resp = await ac.get(path, headers={"HX-Request": "true"}, follow_redirects=False)
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/auth/me", "/partials/audit/entries"])
+async def test_api_and_partials_keep_the_401(client, path):
+    """The redirect is for address-bar navigations only."""
+    ac, _ = client
+    resp = await ac.get(path, follow_redirects=False)
+    assert resp.status_code == 401
+
+
+# ── ?next= round-trip ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_redirect_preserves_path_and_query(client):
+    ac, _ = client
+    resp = await ac.get("/agent?sort=confidence", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/login?next=%2Fagent%3Fsort%3Dconfidence"
+
+
+@pytest.mark.asyncio
+async def test_login_returns_to_next(client):
+    ac, _ = client
+    resp = await ac.post(
+        "/login",
+        data={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+            "next": "/agent?sort=confidence",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/agent?sort=confidence"
+
+
+@pytest.mark.asyncio
+async def test_failed_login_keeps_next(client):
+    """A typo on the way in must not lose the destination."""
+    ac, _ = client
+    resp = await ac.post(
+        "/login",
+        data={"username": TEST_USERNAME, "password": "wrong", "next": "/audit"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 401
+    assert b'name="next" value="/audit"' in resp.content
+
+
+OPEN_REDIRECT_PAYLOADS = [
+    "//evil.com",
+    "/\\evil.com",
+    "\\\\evil.com",
+    "https://evil.com",
+    "http://evil.com/path",
+    "javascript:alert(1)",
+    "/audit\nLocation: https://evil.com",
+    "evil.com",
+    "",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", OPEN_REDIRECT_PAYLOADS)
+async def test_next_cannot_leave_the_site(client, payload):
+    ac, _ = client
+    resp = await ac.post(
+        "/login",
+        data={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+            "next": payload,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/dashboard"
+
+
+@pytest.mark.asyncio
+async def test_next_cannot_bounce_back_to_login(client):
+    """Otherwise a fresh session lands straight back on the login form."""
+    ac, _ = client
+    resp = await ac.post(
+        "/login",
+        data={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+            "next": "/login",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/dashboard"
+
+
+@pytest.mark.asyncio
+async def test_login_page_rejects_hostile_next_in_the_form(client):
+    """The hidden field is rendered from the sanitised value, not the raw query."""
+    ac, _ = client
+    resp = await ac.get("/login?next=//evil.com")
+    assert resp.status_code == 200
+    assert b"evil.com" not in resp.content
+    assert b'name="next" value="/dashboard"' in resp.content
 
 
 @pytest.mark.asyncio
@@ -67,9 +194,10 @@ async def test_logout_clears_session(auth_client):
     ac, _ = auth_client
     resp = await ac.post("/logout", follow_redirects=False)
     assert resp.status_code == 302
-    # After logout, dashboard should be inaccessible
+    # After logout, dashboard should bounce to login
     resp2 = await ac.get("/dashboard", follow_redirects=False)
-    assert resp2.status_code == 401
+    assert resp2.status_code == 302
+    assert resp2.headers["location"] == "/login?next=%2Fdashboard"
 
 
 @pytest.mark.asyncio

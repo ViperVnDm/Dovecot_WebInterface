@@ -61,3 +61,7 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+# Claude Code — machine-local settings (tool allowlists, local paths).
+# Anything meant to be shared belongs in .claude/settings.json instead.
+.claude/settings.local.json

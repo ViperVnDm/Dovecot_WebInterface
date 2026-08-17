@@ -10,7 +10,7 @@ FastAPI/Python web admin console for Dovecot + Postfix mail servers. Uses HTMX f
 
 - **Backend:** FastAPI, SQLAlchemy (async), aiosqlite, pydantic-settings
 - **Templates:** Jinja2 + HTMX, Tailwind CSS (CDN)
-- **Auth:** Custom session tokens (bcrypt passwords, DB-backed sessions, HttpOnly cookies)
+- **Auth:** Custom session tokens (bcrypt passwords, DB-backed sessions, HttpOnly cookies). An unauthenticated *plain* navigation to an HTML page gets a 302 to `/login` (global `HTTPException` handler in `main.py`). Everything else keeps the JSON 401 — `/api/*`, `/partials/*`, and any request carrying `HX-Request` (which is every in-app link, since `base.html` sets `hx-boost="true"` on `<body>`) — because XHR follows a 302 invisibly and htmx would swap the login page into the current layout under the old URL. Those 401s hit the `htmx:responseError` handler in `base.html`, which does a real top-level redirect. The redirect carries the requested path as `?next=`, which `login()` re-validates through `_safe_next()` (`app/api/auth.py`) before honouring — it is an open-redirect gate, so keep it rejecting protocol-relative (`//host`, `/\host`), absolute, and control-character values
 - **Background tasks:** asyncio tasks started in FastAPI lifespan (alert checker, storage collector, log-triage agent, expired-session cleanup)
 - **Tests:** pytest + pytest-asyncio, httpx AsyncClient, in-memory SQLite, unittest.mock
 

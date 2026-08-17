@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.security import (
@@ -25,14 +25,46 @@ _settings = get_settings()
 # username exists. Generated once on import.
 _DUMMY_HASH = hash_password("dummy-password-for-timing-equalisation")
 
+DEFAULT_POST_LOGIN_PATH = "/dashboard"
+
+
+def _safe_next(value: str | None) -> str:
+    """Sanitise the `?next=` / `next` form value into a local path.
+
+    Only same-origin *relative* paths are honoured — anything else falls back
+    to the dashboard. This is the open-redirect gate: the value reaches us
+    from the URL bar, so an attacker can hand a victim a login link that would
+    otherwise bounce them to a lookalike host after a genuine login.
+
+    Rejected, specifically:
+      - `//evil.com` and `/\\evil.com` — protocol-relative URLs. Browsers
+        normalise the backslash form to `//`, so any backslash is refused.
+      - `https://evil.com`, `javascript:…` — anything not starting with `/`.
+      - control characters, which can smuggle a second header past a proxy.
+      - `/login*`, which would bounce a just-authenticated user back to the
+        login form.
+    """
+    if not value or not value.startswith("/"):
+        return DEFAULT_POST_LOGIN_PATH
+    if value.startswith("//") or "\\" in value:
+        return DEFAULT_POST_LOGIN_PATH
+    if any(ch < " " or ch == "\x7f" for ch in value):
+        return DEFAULT_POST_LOGIN_PATH
+    if value == "/login" or value.startswith("/login?"):
+        return DEFAULT_POST_LOGIN_PATH
+    return value
+
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
+async def login_page(
+    request: Request,
+    next_url: str = Query("", alias="next"),
+):
     """Render login page."""
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"title": "Login"},
+        {"title": "Login", "next_url": _safe_next(next_url)},
     )
 
 
@@ -43,10 +75,12 @@ async def login(
     response: Response,
     username: str = Form(...),
     password: str = Form(...),
+    next_url: str = Form("", alias="next"),
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate user and create session."""
     settings = get_settings()
+    next_url = _safe_next(next_url)
 
     # Find user
     result = await db.execute(
@@ -70,6 +104,8 @@ async def login(
             {
                 "title": "Login",
                 "error": "Invalid username or password",
+                # Keep the destination across a failed attempt.
+                "next_url": next_url,
             },
             status_code=401,
         )
@@ -78,7 +114,7 @@ async def login(
     session_token = await create_session(db, user.id, request)
 
     # Set session cookie and redirect
-    response = RedirectResponse(url="/dashboard", status_code=302)
+    response = RedirectResponse(url=next_url, status_code=302)
     response.set_cookie(
         key=settings.session_cookie_name,
         value=session_token,
