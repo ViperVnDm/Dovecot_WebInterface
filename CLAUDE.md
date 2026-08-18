@@ -35,6 +35,13 @@ SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrati
 - `get_all_settings(db=None)` accepts an optional session — pass a FastAPI-injected session in route handlers so tests can use the in-memory DB override
 - `send_test_email(recipient, db)` sends a test message using the *saved* SMTP settings; exposed via `POST /api/alerts/settings/test` so admins can verify delivery from the Alerts page. The result partial (`partials/alerts_test_result.html`) auto-clears on success after 6s (Alpine `x-init`) but keeps the error (with the SMTP exception text) on screen on failure.
 
+**Webhook delivery (`app/core/webhook.py`).** Webhooks are the only outbound request the app makes to an operator-supplied URL, so the whole path lives in one module: `validate_webhook_url()` is the save-time gate (used by `alerts.py`) and `deliver_webhook()` is the send-time path (used by `alert_checker._send_webhook`). Do not go back to `urllib.request.urlopen()` — it follows redirects, so a public https host could 302 to `http://169.254.169.254/`, and it re-resolves DNS at send time, so a name that validated public at rule creation can answer private when the alert fires. Four properties, all covered by `tests/test_webhook_ssrf.py`:
+
+- **Every hop is re-validated**, not just the first, and redirects may only target https.
+- **The checked address is the dialled address.** `_open_connection()` resolves once, validates, then assigns a pre-built socket to `conn.sock` so `http.client` never calls `connect()` and never re-resolves. `server_hostname` keeps SNI and cert verification on the real hostname — pinning must not be paid for by weakening `ssl.create_default_context()`.
+- **IPv4-mapped IPv6 is unwrapped first.** `ipaddress.ip_address("::ffff:127.0.0.1").is_loopback` is `False`, so the mapped form would otherwise sail past the policy.
+- **Delivery is blind.** The response body is drained and discarded, never logged or returned, so a target that does slip through still can't be read.
+
 ### Storage History
 `storage_collector_loop()` takes a disk usage snapshot on startup then every hour. `StorageHistory` records are queried last 30 days (one point per calendar day) for the history chart.
 

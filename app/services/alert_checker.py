@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.core.permissions import get_helper_client, PrivilegedHelperError
+from app.core.webhook import deliver_webhook
 from app.database import AlertHistory, AlertRule, AppSetting, async_session
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,13 @@ async def _send_email(rule: AlertRule, current_value: float, message: str) -> bo
 
 
 def _send_webhook(rule: AlertRule, current_value: float, message: str) -> bool:
-    """POST a JSON payload to the webhook URL. Returns True on success."""
+    """POST a JSON payload to the webhook URL. Returns True on success.
+
+    Delivery goes through `deliver_webhook`, which re-validates the target on
+    every hop — the URL passed the address policy when the rule was saved, but
+    that was a different DNS lookup, possibly months ago.
+    """
     import json
-    import urllib.request
 
     payload = json.dumps({
         "rule": rule.name,
@@ -128,14 +133,7 @@ def _send_webhook(rule: AlertRule, current_value: float, message: str) -> bool:
     }).encode()
 
     try:
-        req = urllib.request.Request(
-            rule.notification_target,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10):
-            pass
+        deliver_webhook(rule.notification_target, payload)
         logger.info(f"Webhook delivered for rule '{rule.name}' to {rule.notification_target}")
         return True
     except Exception as e:

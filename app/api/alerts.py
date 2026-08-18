@@ -1,15 +1,12 @@
 """Alert rules API routes."""
 
-import ipaddress
-import socket as _socket
-from urllib.parse import urlparse
-
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import record_audit
 from app.core.security import get_current_user
+from app.core.webhook import WebhookTargetError, validate_webhook_url
 from app.database import get_db, AdminUser, AlertRule, AppSetting
 from app.services.alert_checker import (
     get_all_settings,
@@ -39,42 +36,15 @@ def _validate_email_target(target: str) -> str:
 
 
 def _validate_webhook_target(target: str) -> str:
-    """Validate a webhook URL: must be https, not localhost, not private/link-local."""
-    target = (target or "").strip()
-    if not target:
-        raise HTTPException(400, "Webhook URL is required")
-    parsed = urlparse(target)
-    if parsed.scheme not in ("https",):
-        raise HTTPException(400, "Webhook URL must use HTTPS")
-    if not parsed.hostname:
-        raise HTTPException(400, "Webhook URL must include a hostname")
+    """Validate a webhook URL: must be https, not localhost, not private/link-local.
 
-    # Resolve and reject anything pointing at internal infrastructure.
+    This is only the save-time gate — the same checks run again on every hop at
+    delivery time, since DNS can change in between. See `app/core/webhook.py`.
+    """
     try:
-        infos = _socket.getaddrinfo(parsed.hostname, None)
-    except _socket.gaierror:
-        raise HTTPException(400, f"Cannot resolve webhook hostname: {parsed.hostname}")
-
-    for family, _socktype, _proto, _canon, sockaddr in infos:
-        ip_str = sockaddr[0]
-        try:
-            ip_addr = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        if (
-            ip_addr.is_private
-            or ip_addr.is_loopback
-            or ip_addr.is_link_local
-            or ip_addr.is_multicast
-            or ip_addr.is_reserved
-            or ip_addr.is_unspecified
-        ):
-            raise HTTPException(
-                400,
-                f"Webhook URL resolves to a forbidden address ({ip_str}). "
-                "Webhooks may not target private, loopback, or link-local hosts.",
-            )
-    return target
+        return validate_webhook_url(target)
+    except WebhookTargetError as exc:
+        raise HTTPException(400, str(exc))
 
 
 def _validate_rule_inputs(
