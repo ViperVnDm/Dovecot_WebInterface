@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.database import AppSetting, BanSuggestion, LogAgentRun
+from app.database import AppSetting, AuditLog, BanSuggestion, LogAgentRun
 from app.services import log_agent
 from app.services.llm_client import IPSummary, Suggestion, TokenUsage
 
@@ -825,6 +825,171 @@ async def test_approve_all_bans_applies_each_and_skips_allowlisted(auth_client, 
         assert (await db.get(BanSuggestion, safe)).status == "pending"
         # allowlist-action suggestion → untouched (approve-all-bans only touches ban action)
         assert (await db.get(BanSuggestion, al)).status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_approve_selected_applies_only_checked_suggestions(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.api.logs import SETTING_BAN_ALLOWLIST
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        ban1 = await _create_pending(db, "10.20.30.40", action="ban")
+        ban2 = await _create_pending(db, "10.20.30.41", action="ban")
+        al = await _create_pending(db, "35.0.0.5", action="allowlist")
+        unchecked = await _create_pending(db, "10.20.30.42", action="ban")
+
+    resp = await ac.post(
+        "/api/agent/suggestions/approve-selected",
+        data={"ids": [str(ban1), str(ban2), str(al)]},
+    )
+    assert resp.status_code == 200
+    assert "Approved 3." in resp.text
+
+    banned = {c.args[0] for c in mock_helper.ban_ip.await_args_list}
+    assert banned == {"10.20.30.40", "10.20.30.41"}
+
+    async with factory() as db:
+        for sid in (ban1, ban2, al):
+            row = await db.get(BanSuggestion, sid)
+            assert row.status == "approved"
+            assert row.reviewed_by is not None
+        assert (await db.get(BanSuggestion, unchecked)).status == "pending"
+        setting = (await db.execute(
+            select(AppSetting).where(AppSetting.key == SETTING_BAN_ALLOWLIST)
+        )).scalar_one()
+        assert "35.0.0.5" in setting.value
+
+
+@pytest.mark.asyncio
+async def test_approve_selected_allowlists_before_banning_same_target(auth_client, db_engine):
+    """A batch that both allowlists and bans a target must not ban it,
+    regardless of the order the ids were submitted in."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        ban = await _create_pending(db, "64.233.160.5", action="ban")
+        al = await _create_pending(db, "64.233.160.5", action="allowlist")
+
+    resp = await ac.post(
+        "/api/agent/suggestions/approve-selected",
+        data={"ids": [str(ban), str(al)]},
+    )
+    assert resp.status_code == 200
+    mock_helper.ban_ip.assert_not_awaited()
+    assert "Failed (left pending): 64.233.160.5" in resp.text
+
+    async with factory() as db:
+        assert (await db.get(BanSuggestion, al)).status == "approved"
+        assert (await db.get(BanSuggestion, ban)).status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_approve_selected_continues_past_helper_failure(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.core.permissions import PrivilegedHelperError
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        bad = await _create_pending(db, "10.0.0.1", action="ban")
+        good = await _create_pending(db, "10.0.0.2", action="ban")
+
+    async def _ban(target):
+        if target == "10.0.0.1":
+            raise PrivilegedHelperError("ufw failed", 500)
+    mock_helper.ban_ip.side_effect = _ban
+
+    resp = await ac.post(
+        "/api/agent/suggestions/approve-selected",
+        data={"ids": [str(bad), str(good)]},
+    )
+    assert resp.status_code == 200
+    assert "Approved 1." in resp.text
+
+    async with factory() as db:
+        assert (await db.get(BanSuggestion, bad)).status == "pending"
+        assert (await db.get(BanSuggestion, good)).status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_approve_selected_ignores_already_reviewed_ids(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        sid = await _create_pending(db, "10.0.0.9", action="ban")
+        row = await db.get(BanSuggestion, sid)
+        row.status = "rejected"
+        await db.commit()
+
+    resp = await ac.post(
+        "/api/agent/suggestions/approve-selected",
+        data={"ids": [str(sid), "999999"]},
+    )
+    assert resp.status_code == 200
+    assert "2 already reviewed." in resp.text
+    mock_helper.ban_ip.assert_not_awaited()
+    async with factory() as db:
+        assert (await db.get(BanSuggestion, sid)).status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_bulk_routes_require_a_selection(auth_client):
+    ac, _ = auth_client
+    for path in ("approve-selected", "reject-selected"):
+        resp = await ac.post(f"/api/agent/suggestions/{path}")
+        assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reject_selected_marks_only_checked(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+
+    async with factory() as db:
+        a = await _create_pending(db, "10.1.1.1")
+        b = await _create_pending(db, "10.1.1.2")
+        keep = await _create_pending(db, "10.1.1.3")
+
+    resp = await ac.post(
+        "/api/agent/suggestions/reject-selected?sort=oldest",
+        data={"ids": [str(a), str(b)]},
+    )
+    assert resp.status_code == 200
+    assert "Rejected 2." in resp.text
+    assert 'sort=oldest' in resp.text  # sort survives the re-render
+    mock_helper.ban_ip.assert_not_awaited()
+
+    async with factory() as db:
+        assert (await db.get(BanSuggestion, a)).status == "rejected"
+        assert (await db.get(BanSuggestion, b)).status == "rejected"
+        assert (await db.get(BanSuggestion, keep)).status == "pending"
+        audits = (await db.execute(
+            select(AuditLog).where(AuditLog.action == "reject_suggestion")
+        )).scalars().all()
+        assert {r.resource_id for r in audits} == {str(a), str(b)}
+
+
+@pytest.mark.asyncio
+async def test_partial_renders_row_checkboxes_and_pauses_poll_on_selection(auth_client, db_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+
+    async with factory() as db:
+        sid = await _create_pending(db, "10.2.2.2")
+
+    resp = await ac.get("/api/agent/suggestions")
+    assert f'name="ids"' in resp.text and f'value="{sid}"' in resp.text
+    assert "approve-selected" in resp.text
+    # the poll must not wipe a selection in progress
+    assert "every 30s [!document.querySelector('#agent-suggestions .suggestion-select:checked')]" in resp.text
 
 
 # ── Settings round-trip ──────────────────────────────────────────────────────

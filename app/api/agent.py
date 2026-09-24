@@ -98,6 +98,14 @@ async def list_suggestions(
     db: AsyncSession = Depends(get_db),
 ):
     """HTMX partial — pending suggestions in the order given by ?sort=."""
+    return await _render_suggestions(request, db)
+
+
+async def _render_suggestions(
+    request: Request, db: AsyncSession, notice: str | None = None
+):
+    """Render the pending list. `notice` is a one-line result summary shown
+    above the list after a bulk action (e.g. which targets failed to apply)."""
     sort = _requested_sort(request)
 
     # Time ordering stays in SQL. The network/confidence sorts are then applied
@@ -140,7 +148,7 @@ async def list_suggestions(
     return templates.TemplateResponse(
         request,
         "partials/agent_suggestions.html",
-        context={"suggestions": suggestions, "sort": sort},
+        context={"suggestions": suggestions, "sort": sort, "notice": notice},
     )
 
 
@@ -158,6 +166,84 @@ async def _audit(db: AsyncSession, user_id: int, action: str, suggestion: BanSug
     ))
 
 
+class _ApplyError(Exception):
+    """A suggestion could not be applied. Carries the HTTP status the
+    single-approve route should return; bulk routes report it instead."""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+async def _apply_suggestion(suggestion: BanSuggestion, allowlist: list[str]) -> bool:
+    """Carry out a pending suggestion's action.
+
+    Ban → helper.ban_ip. Allowlist → mutates `allowlist` in place; the caller
+    persists it with _save_allowlist() (once, so a bulk approve writes the
+    setting a single time). Returns True when `allowlist` was changed.
+    Raises _ApplyError on anything that should leave the suggestion pending.
+    """
+    target = suggestion.target.strip()
+
+    if suggestion.action == "ban":
+        # Defense-in-depth: re-check allowlist client-side. Helper also validates.
+        if "/" not in target and is_allowlisted(target, allowlist):
+            raise _ApplyError(403, f"{target} is on the never-ban allowlist")
+        try:
+            await get_helper_client().ban_ip(target)
+        except PrivilegedHelperError as e:
+            raise _ApplyError(e.code, e.message)
+        return False
+
+    if suggestion.action == "allowlist":
+        try:
+            if "/" in target:
+                ipaddress.ip_network(target, strict=False)
+            else:
+                ipaddress.ip_address(target)
+        except ValueError:
+            raise _ApplyError(400, f"Invalid IP/CIDR in suggestion: {target}")
+        if target in allowlist:
+            return False
+        allowlist.append(target)
+        if "/" in target:
+            covered = _ips_covered_by_cidr(target, allowlist)
+            allowlist[:] = [e for e in allowlist if e not in covered]
+        return True
+
+    raise _ApplyError(400, f"Unknown suggestion action: {suggestion.action}")
+
+
+async def _save_allowlist(db: AsyncSession, allowlist: list[str]) -> None:
+    value = ",".join(allowlist)
+    row = (await db.execute(
+        select(AppSetting).where(AppSetting.key == SETTING_BAN_ALLOWLIST)
+    )).scalar_one_or_none()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=SETTING_BAN_ALLOWLIST, value=value))
+
+
+def _mark_reviewed(suggestion: BanSuggestion, status: str, user_id: int, now: datetime) -> None:
+    suggestion.status = status
+    suggestion.reviewed_by = user_id
+    suggestion.reviewed_at = now
+
+
+async def _pending_by_ids(db: AsyncSession, ids: list[int]) -> list[BanSuggestion]:
+    """The still-pending suggestions among `ids`. Ids that were already
+    reviewed (e.g. by another admin, or the 30-day expiry) are dropped."""
+    result = await db.execute(
+        select(BanSuggestion).where(
+            BanSuggestion.id.in_(set(ids)),
+            BanSuggestion.status == "pending",
+        )
+    )
+    return list(result.scalars().all())
+
+
 @router.post("/suggestions/{suggestion_id}/approve")
 async def approve_suggestion(
     request: Request,
@@ -170,47 +256,14 @@ async def approve_suggestion(
     if suggestion is None or suggestion.status != "pending":
         raise HTTPException(404, "Suggestion not found or already reviewed")
 
-    target = suggestion.target.strip()
+    allowlist = await load_allowlist(db)
+    try:
+        if await _apply_suggestion(suggestion, allowlist):
+            await _save_allowlist(db, allowlist)
+    except _ApplyError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
 
-    if suggestion.action == "ban":
-        # Defense-in-depth: re-check allowlist client-side. Helper also validates.
-        allowlist = await load_allowlist(db)
-        if "/" not in target and is_allowlisted(target, allowlist):
-            raise HTTPException(403, f"{target} is on the never-ban allowlist")
-        helper = get_helper_client()
-        try:
-            await helper.ban_ip(target)
-        except PrivilegedHelperError as e:
-            raise HTTPException(status_code=e.code, detail=e.message)
-    elif suggestion.action == "allowlist":
-        # Validate then append.
-        try:
-            if "/" in target:
-                ipaddress.ip_network(target, strict=False)
-            else:
-                ipaddress.ip_address(target)
-        except ValueError:
-            raise HTTPException(400, f"Invalid IP/CIDR in suggestion: {target}")
-        allowlist = await load_allowlist(db)
-        if target not in allowlist:
-            allowlist.append(target)
-            if "/" in target:
-                covered = _ips_covered_by_cidr(target, allowlist)
-                allowlist = [e for e in allowlist if e not in covered]
-            value = ",".join(allowlist)
-            row = (await db.execute(
-                select(AppSetting).where(AppSetting.key == SETTING_BAN_ALLOWLIST)
-            )).scalar_one_or_none()
-            if row:
-                row.value = value
-            else:
-                db.add(AppSetting(key=SETTING_BAN_ALLOWLIST, value=value))
-    else:
-        raise HTTPException(400, f"Unknown suggestion action: {suggestion.action}")
-
-    suggestion.status = "approved"
-    suggestion.reviewed_by = current_user.id
-    suggestion.reviewed_at = datetime.now(timezone.utc)
+    _mark_reviewed(suggestion, "approved", current_user.id, datetime.now(timezone.utc))
     await _audit(db, current_user.id, "approve_suggestion", suggestion)
     await db.commit()
 
@@ -235,6 +288,90 @@ async def reject_suggestion(
     await _audit(db, current_user.id, "reject_suggestion", suggestion)
     await db.commit()
     return await list_suggestions(request, current_user=current_user, db=db)
+
+
+@router.post("/suggestions/approve-selected")
+async def approve_selected_suggestions(
+    request: Request,
+    ids: list[int] = Form(default=[]),
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply every checked suggestion (bans and allowlist additions).
+
+    Best-effort, like approve-all-bans: a target that fails to apply stays
+    pending and is named in the result notice, the rest still go through.
+    Allowlist actions run first so a ban in the same batch for a target that
+    is also being allowlisted is refused rather than applied.
+    """
+    if not ids:
+        raise HTTPException(400, "No suggestions selected")
+
+    pending = await _pending_by_ids(db, ids)
+    pending.sort(key=lambda s: s.action != "allowlist")  # stable: allowlist first
+
+    allowlist = await load_allowlist(db)
+    allowlist_changed = False
+    now = datetime.now(timezone.utc)
+    applied = 0
+    failed: list[str] = []
+
+    for suggestion in pending:
+        try:
+            allowlist_changed |= await _apply_suggestion(suggestion, allowlist)
+        except _ApplyError as e:
+            logger.warning("approve-selected: %s %s failed: %s",
+                           suggestion.action, suggestion.target, e.detail)
+            failed.append(suggestion.target)
+            continue
+        _mark_reviewed(suggestion, "approved", current_user.id, now)
+        await _audit(db, current_user.id, "approve_suggestion", suggestion)
+        applied += 1
+
+    if allowlist_changed:
+        await _save_allowlist(db, allowlist)
+
+    stale = len(set(ids)) - len(pending)
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="approve_selected_suggestions",
+        resource_type="ban_suggestion",
+        resource_id="*",
+        details=json.dumps({"applied": applied, "failed": failed, "already_reviewed": stale}),
+    ))
+    await db.commit()
+
+    notice = f"Approved {applied}."
+    if failed:
+        notice += f" Failed (left pending): {', '.join(failed)}."
+    if stale:
+        notice += f" {stale} already reviewed."
+    return await _render_suggestions(request, db, notice=notice)
+
+
+@router.post("/suggestions/reject-selected")
+async def reject_selected_suggestions(
+    request: Request,
+    ids: list[int] = Form(default=[]),
+    current_user: AdminUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark every checked suggestion rejected without applying anything."""
+    if not ids:
+        raise HTTPException(400, "No suggestions selected")
+
+    pending = await _pending_by_ids(db, ids)
+    now = datetime.now(timezone.utc)
+    for suggestion in pending:
+        _mark_reviewed(suggestion, "rejected", current_user.id, now)
+        await _audit(db, current_user.id, "reject_suggestion", suggestion)
+    await db.commit()
+
+    notice = f"Rejected {len(pending)}."
+    stale = len(set(ids)) - len(pending)
+    if stale:
+        notice += f" {stale} already reviewed."
+    return await _render_suggestions(request, db, notice=notice)
 
 
 @router.post("/suggestions/approve-all-bans")
