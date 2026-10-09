@@ -14,8 +14,10 @@ import pytest
 
 from app.services import llm_client
 from app.services.llm_client import (
+    LONG_PROMPT_TOKENS,
     MAX_SAMPLE_LINE_CHARS,
     IPSummary,
+    TokenUsage,
     _format_user_message,
     _sanitize_log_line,
     triage_ips,
@@ -66,7 +68,7 @@ def fake_sdk(monkeypatch):
 
     settings = types.SimpleNamespace(
         anthropic_api_key="test-key",
-        log_agent_model="claude-haiku-4-5",
+        log_agent_model="claude-haiku-5-5",
     )
     monkeypatch.setattr(llm_client, "get_settings", lambda: settings)
     return holder
@@ -153,7 +155,7 @@ async def test_in_batch_suggestion_keeps_its_evidence(fake_sdk):
     assert len(suggestions) == 1
     assert suggestions[0].evidence == ["SASL LOGIN failed"]
     assert suggestions[0].confidence == 88
-    assert model == "claude-haiku-4-5"
+    assert model == "claude-haiku-5-5"
     assert stop_reason == "end_turn"
     assert usage.input_tokens == 100
 
@@ -182,13 +184,88 @@ async def test_truncation_is_reported_to_the_caller(fake_sdk):
 
 
 @pytest.mark.asyncio
-async def test_request_does_not_ask_for_prompt_caching(fake_sdk):
-    """Haiku 4.5's 4096-token minimum prefix makes a breakpoint here a no-op.
+async def test_refusal_is_reported_to_the_caller(fake_sdk):
+    """Haiku 5.5 can decline with a 200 and no tool_use block at all."""
+    response = _Response([], stop_reason="refusal")
+    response.content = []
+    response.stop_details = types.SimpleNamespace(category="cyber")
+    fake_sdk["response"] = response
 
-    Guards against someone reinstating it and quietly paying the write premium
-    for a cache that is never read.
+    suggestions, _usage, _model, stop_reason = await triage_ips([_summary()])
+
+    assert suggestions == []
+    assert stop_reason == "refusal"
+
+
+@pytest.mark.asyncio
+async def test_request_shape_suits_haiku_5_5(fake_sdk):
+    """The parameters Haiku 5.5 rejects, and the ones this call depends on."""
+    await triage_ips([_summary()])
+
+    request = fake_sdk["request"]
+    assert request["model"] == "claude-haiku-5-5"
+    # The forced tool call is what skips default-on thinking.
+    assert request["tool_choice"] == {"type": "tool", "name": "record_suggestions"}
+    # ~3400 output tokens on the old tokenizer is ~4400 on the new one.
+    assert request["max_tokens"] >= 8192
+    # Each of these is a 400 on Haiku 5.5.
+    for rejected in ("temperature", "top_p", "top_k", "fallbacks"):
+        assert rejected not in request
+    assert request["messages"][-1]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_request_does_not_ask_for_prompt_caching(fake_sdk):
+    """The 8-hour run interval means a cached prefix is never read back.
+
+    On Haiku 4.5 a breakpoint here was a no-op (prompt under the 4096-token
+    minimum); on Haiku 5.5 the minimum is 512, so reinstating it would pay
+    the write premium on every run for nothing.
     """
     await triage_ips([_summary()])
 
     system = fake_sdk["request"]["system"]
     assert all("cache_control" not in block for block in system)
+
+
+# ── Cost accounting ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_usage_is_costed_at_the_called_models_rates(fake_sdk):
+    _suggestions, usage, _model, _stop = await triage_ips([_summary()])
+
+    # 100 in / 50 out at $0.10 / $0.50 per MTok.
+    assert usage.cost_usd == pytest.approx((100 * 0.10 + 50 * 0.50) / 1_000_000)
+
+
+def test_haiku_5_5_long_prompts_use_the_higher_rate_card():
+    short = TokenUsage(input_tokens=LONG_PROMPT_TOKENS, output_tokens=1000, model="claude-haiku-5-5")
+    long = TokenUsage(input_tokens=LONG_PROMPT_TOKENS + 1, output_tokens=1000, model="claude-haiku-5-5")
+
+    assert short.cost_usd == pytest.approx((100_000 * 0.10 + 1000 * 0.50) / 1_000_000)
+    assert long.cost_usd == pytest.approx((100_001 * 0.50 + 1000 * 2.50) / 1_000_000)
+
+
+def test_cached_tokens_count_toward_the_long_prompt_threshold():
+    usage = TokenUsage(
+        input_tokens=10,
+        cache_read_tokens=LONG_PROMPT_TOKENS,
+        model="claude-haiku-5-5",
+    )
+
+    assert usage.cost_usd == pytest.approx((10 * 0.50 + 100_000 * 0.50 * 0.10) / 1_000_000)
+
+
+def test_dated_haiku_4_5_snapshot_keeps_its_own_rates():
+    # A server whose .env still pins the old snapshot must not be costed at
+    # a tenth of what it is actually spending.
+    usage = TokenUsage(input_tokens=1000, output_tokens=1000, model="claude-haiku-4-5-20251001")
+
+    assert usage.cost_usd == pytest.approx((1000 * 1.0 + 1000 * 5.0) / 1_000_000)
+
+
+def test_unknown_model_is_costed_at_the_dearest_known_rates():
+    usage = TokenUsage(input_tokens=1000, output_tokens=1000, model="some-future-model")
+
+    assert usage.cost_usd == pytest.approx((1000 * 1.0 + 1000 * 5.0) / 1_000_000)

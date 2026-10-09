@@ -61,14 +61,16 @@ UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 add
 
 ### Log-Triage Agent
 
-`app/services/log_agent.py` (orchestration) + `app/services/llm_client.py` (Anthropic call). Runs on a DB-configured interval, groups new log lines per source IP, asks Claude Haiku 4.5 to triage them, and writes `BanSuggestion` rows for review at `/agent`.
+`app/services/log_agent.py` (orchestration) + `app/services/llm_client.py` (Anthropic call). Runs on a DB-configured interval, groups new log lines per source IP, asks Claude Haiku 5.5 to triage them, and writes `BanSuggestion` rows for review at `/agent`.
 
 Four invariants worth not breaking:
 
-- **Watermarks commit only on success.** `_gather_log_entries()` *returns* proposed `log_agent_marker_*` values; `_execute_run()` calls `_persist_markers()` only when `error is None`. Committing at gather time (the original behaviour) silently discarded the whole log window whenever the LLM call failed — the run row looked identical to a quiet period. Truncation at `max_tokens` counts as a failure for this purpose.
+- **Watermarks commit only on success.** `_gather_log_entries()` *returns* proposed `log_agent_marker_*` values; `_execute_run()` calls `_persist_markers()` only when `error is None`. Committing at gather time (the original behaviour) silently discarded the whole log window whenever the LLM call failed — the run row looked identical to a quiet period. Truncation at `max_tokens` counts as a failure for this purpose, and so does `stop_reason == "refusal"` — Haiku 5.5's safety classifiers can decline a request with an HTTP 200 and no `tool_use` block, which would otherwise parse to zero suggestions.
 - **Suggestions are constrained to the input batch.** `triage_ips()` drops any returned IP that was not a key of `by_ip`. Log lines contain attacker-controlled text (SASL usernames, HELO strings, SSH login names) and auto-ban turns model output into a `ufw deny`, so an off-batch target is treated as an injection attempt, not a decision. Sample lines are also sanitised (`_sanitize_log_line`) and fenced in a `<log_evidence>` block the system prompt names as untrusted.
 - **Auto-ban gates on evidence, not confidence.** `qualifies_for_auto_ban()` (pure, unit-tested) requires `AUTO_BAN_MIN_EVENTS` events and at least one service in `AUTO_BAN_AUTH_SERVICES`, with confidence as a secondary filter. It uses the model's *base* confidence, before the repeat-offender boost — the boost is an operator-facing signal and must not by itself cross the unattended-action threshold. Measured over 5,096 real suggestions, approved ones averaged 79.2 confidence and rejected ones 76.0, which is why confidence alone is not a sufficient gate.
-- **No prompt caching.** Haiku 4.5 needs a 4096-token minimum cacheable prefix; this system prompt is ~600 tokens, so a `cache_control` breakpoint is silently ignored (it never produced a cache read in three months of production runs) and the 8-hour interval is far past the ephemeral TTL anyway. `test_request_does_not_ask_for_prompt_caching` guards against reinstating it.
+- **No prompt caching.** The 8-hour interval is far past the ephemeral TTL, so a cached prefix is never read back. On Haiku 4.5 a `cache_control` breakpoint was a silent no-op (the ~600-token system prompt sat under that model's 4096-token minimum; it never produced a cache read in three months of production runs). On Haiku 5.5 the minimum is 512 tokens, so the same breakpoint would write an entry and pay the write premium every run for nothing. `test_request_does_not_ask_for_prompt_caching` guards against reinstating it.
+
+**Model-specific request shape (Haiku 5.5).** The forced `tool_choice` matters beyond schema enforcement: thinking is on by default on Haiku 5.5 and a forced tool call skips it, so the response is just the `tool_use` block. `MAX_OUTPUT_TOKENS` is 8192 because the newer tokenizer counts the same text ~30% higher — the ~3,400-token peak measured on Haiku 4.5 no longer fits in 4096, and a truncated run leaves the watermarks in place. Don't add `temperature`/`top_p`/`top_k` or `fallbacks`; each is a 400 on this model. Cost is computed from `MODEL_RATES` in `llm_client.py`, keyed by model-id prefix so it follows whatever `LOG_AGENT_MODEL` is actually set to (Haiku 5.5 has a second, dearer rate card above a 100K-token prompt); an unlisted model is costed at the dearest known rates so the daily cap trips early rather than late.
 
 `_run_lock` serialises `run_once()` — "Run now" spawns a bare task and the background loop fires on its own schedule; concurrent runs would double-consume watermarks and double-spend the daily cost cap.
 
@@ -149,7 +151,7 @@ If a new module imports `get_helper_client`, add it to the patch list in `confte
 | `HELPER_SOCKET_PATH` | `/run/dovecot-webadmin/helper.sock` | |
 | `MAIL_LOG_PATH` | `/var/log/mail.log` | |
 | `ANTHROPIC_API_KEY` | *(empty)* | Log-triage agent; runs are skipped when unset |
-| `LOG_AGENT_MODEL` | `claude-haiku-4-5` | Alias, not a dated snapshot, so it survives rotation |
+| `LOG_AGENT_MODEL` | `claude-haiku-5-5` | An explicit value in the server's `.env` overrides this default; add new models to `MODEL_RATES` |
 | `LOG_AGENT_DAILY_COST_CAP_USD` | `1.0` | Checked before a run, so a run can overshoot slightly |
 | `LOG_AGENT_MAX_IPS_PER_RUN` | `50` | Bounds prompt size and output length |
 

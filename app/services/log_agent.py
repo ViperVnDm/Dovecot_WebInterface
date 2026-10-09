@@ -495,6 +495,11 @@ async def _execute_run(run: LogAgentRun) -> LogAgentRun:
         # empty. Record it on the run row: a truncated run previously looked
         # identical to a quiet one in the UI.
         error = "output truncated at max_tokens — suggestions may be incomplete"
+    elif error is None and stop_reason == "refusal":
+        # A declined request returns no tool_use block, so it parses to zero
+        # suggestions — indistinguishable from a quiet period unless it is
+        # recorded as a failure here.
+        error = "model declined the request (refusal) — no suggestions returned"
 
     # The model's own number, kept before the repeat-offender boost below.
     # qualifies_for_auto_ban() gates on this rather than the boosted value.

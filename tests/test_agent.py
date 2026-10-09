@@ -726,6 +726,31 @@ async def test_truncated_output_is_recorded_on_the_run(auth_client, db_engine):
 
 
 @pytest.mark.asyncio
+async def test_declined_request_is_recorded_on_the_run(auth_client, db_engine):
+    """A refusal parses to zero suggestions; it must not look like a quiet run."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, mock_helper = auth_client
+    _seed_log_source(mock_helper)
+
+    async def fake_triage(grouped):
+        return [], TokenUsage(input_tokens=10, output_tokens=0), "test-model", "refusal"
+
+    with patch("app.services.log_agent.async_session", factory), \
+         patch("app.services.log_agent.triage_ips", side_effect=fake_triage), \
+         patch.object(log_agent.settings, "anthropic_api_key", "test-key"):
+        run = await log_agent.run_once(force=True)
+
+    assert "declined" in run.error
+    # A refusal is a failure, so the window is not consumed either.
+    async with factory() as db:
+        marker = await log_agent._get_setting(
+            db, log_agent.SETTING_MARKER_PREFIX + "mail_postfix"
+        )
+    assert marker is None
+
+
+@pytest.mark.asyncio
 async def test_concurrent_run_is_refused(auth_client, db_engine):
     """The second caller is turned away rather than double-consuming the window."""
     from sqlalchemy.ext.asyncio import async_sessionmaker

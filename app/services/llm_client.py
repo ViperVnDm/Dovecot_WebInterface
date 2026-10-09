@@ -12,13 +12,14 @@ strings and SSH login names, all of which end up verbatim in mail.log. They
 are sanitised and fenced before they reach the model, and the model's output
 is constrained to the IPs we actually asked about (see triage_ips).
 
-No prompt caching. Claude Haiku 4.5 needs a 4096-token minimum cacheable
-prefix and this system prompt is ~600 tokens, so a cache_control breakpoint
-here is silently ignored — it never once produced a cache read in three
-months of production runs. The agent also runs every 8 hours, far past the
-5-minute (or even 1-hour) ephemeral TTL, so the entry would be cold anyway.
-Padding the prompt to clear the floor would cost more in write premium than
-it could ever save. The cache fields below stay because the API still
+No prompt caching. The agent runs every 8 hours, far past the 5-minute (or
+even 1-hour) ephemeral TTL, so a cached prefix is always cold by the next
+run. On Claude Haiku 4.5 a cache_control breakpoint here was merely a no-op
+(the ~600-token system prompt sat under that model's 4096-token minimum, and
+it never once produced a cache read in three months of production runs). On
+Claude Haiku 5.5 the minimum is 512 tokens, so the same breakpoint would
+actually write an entry — paying the write premium on every run for a cache
+that is never read. The cache fields below stay because the API still
 reports them and the arithmetic should remain correct if that ever changes.
 """
 
@@ -34,16 +35,46 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-# Pricing for claude-haiku-4-5 (USD per million tokens). Update if rates change.
-INPUT_COST_PER_MTOK = 1.0
-OUTPUT_COST_PER_MTOK = 5.0
-CACHE_WRITE_COST_PER_MTOK = 1.25
-CACHE_READ_COST_PER_MTOK = 0.10
+@dataclass(frozen=True)
+class ModelRates:
+    """USD per million tokens for one model. Update if rates change."""
+
+    input: float
+    output: float
+    # Billed instead of the above when the prompt exceeds LONG_PROMPT_TOKENS.
+    long_input: float | None = None
+    long_output: float | None = None
+
+
+# Keyed by model-id prefix, so a dated snapshot (claude-haiku-4-5-20251001)
+# prices the same as its alias. LOG_AGENT_MODEL is operator-configurable and
+# the daily cost cap is only as good as this arithmetic, which is why the
+# rates follow the model actually called instead of assuming the default.
+MODEL_RATES: dict[str, ModelRates] = {
+    "claude-haiku-5-5": ModelRates(input=0.10, output=0.50, long_input=0.50, long_output=2.50),
+    "claude-haiku-4-5": ModelRates(input=1.0, output=5.0),
+}
+# A model missing from the table is costed at the dearest known rates, so an
+# unrecognised LOG_AGENT_MODEL trips the daily cap early rather than late.
+FALLBACK_RATES = max(MODEL_RATES.values(), key=lambda r: r.input)
+LONG_PROMPT_TOKENS = 100_000
+# Cache pricing is a multiple of whichever input rate applies.
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.10
+
+
+def rates_for(model: str) -> ModelRates:
+    for prefix, rates in MODEL_RATES.items():
+        if model.startswith(prefix):
+            return rates
+    return FALLBACK_RATES
 
 # Untrusted log text is capped per line and stripped of control characters
 # before it enters the prompt. 200 chars comfortably covers a real syslog
 # line; anything longer is padding meant to push the rubric out of view.
 MAX_SAMPLE_LINE_CHARS = 200
+
+MAX_OUTPUT_TOKENS = 8192
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
@@ -78,14 +109,20 @@ class TokenUsage:
     output_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
+    model: str = ""
 
     @property
     def cost_usd(self) -> float:
+        rates = rates_for(self.model)
+        input_rate, output_rate = rates.input, rates.output
+        prompt_tokens = self.input_tokens + self.cache_creation_tokens + self.cache_read_tokens
+        if rates.long_input is not None and prompt_tokens > LONG_PROMPT_TOKENS:
+            input_rate, output_rate = rates.long_input, rates.long_output
         return (
-            self.input_tokens * INPUT_COST_PER_MTOK
-            + self.output_tokens * OUTPUT_COST_PER_MTOK
-            + self.cache_creation_tokens * CACHE_WRITE_COST_PER_MTOK
-            + self.cache_read_tokens * CACHE_READ_COST_PER_MTOK
+            self.input_tokens * input_rate
+            + self.output_tokens * output_rate
+            + self.cache_creation_tokens * input_rate * CACHE_WRITE_MULTIPLIER
+            + self.cache_read_tokens * input_rate * CACHE_READ_MULTIPLIER
         ) / 1_000_000
 
 
@@ -204,8 +241,8 @@ async def triage_ips(
     """Send IP summaries to Claude.
 
     Returns (suggestions, usage, model, stop_reason). The caller records
-    stop_reason on the run row so a truncated response is visible in the UI
-    rather than only in the service log.
+    stop_reason on the run row so a truncated or declined response is visible
+    in the UI rather than only in the service log.
     """
     if not grouped:
         return [], TokenUsage(), "", None
@@ -220,14 +257,24 @@ async def triage_ips(
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     model = settings.log_agent_model
+    if not any(model.startswith(prefix) for prefix in MODEL_RATES):
+        logger.warning(
+            "No pricing known for model %r; costing this run at fallback rates", model
+        )
 
-    # Observed output peaks around 3400 tokens at the 50-IP cap, so 4096 is
-    # real headroom rather than a tight cap. Truncation is now reported on the
-    # run row (see stop_reason below), which is why a lower ceiling is safe:
-    # the failure is visible instead of silently returning a short parse.
+    # Output peaked around 3400 tokens at the 50-IP cap on Haiku 4.5. Haiku
+    # 5.5's tokenizer counts the same text roughly 30% higher (~4400), which
+    # no longer fits the old 4096 ceiling — and a truncated run is a failed
+    # run that leaves the watermarks in place, so too tight a cap here would
+    # stall the agent on every full batch. Truncation is still reported on
+    # the run row (see stop_reason below) if a batch ever outgrows this.
+    #
+    # The forced tool_choice is also what keeps this predictable on Haiku
+    # 5.5: thinking is on by default there, but a forced tool call skips it,
+    # so the response is the tool_use block and nothing else.
     response = await client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=MAX_OUTPUT_TOKENS,
         system=[{"type": "text", "text": SYSTEM_PROMPT}],
         tools=[_RECORD_SUGGESTIONS_TOOL],
         tool_choice={"type": "tool", "name": "record_suggestions"},
@@ -241,6 +288,15 @@ async def triage_ips(
         logger.warning(
             "Triage hit max_tokens with %d IPs in input; output was truncated. "
             "Reduce LOG_AGENT_MAX_IPS_PER_RUN or raise max_tokens.",
+            len(grouped),
+        )
+    elif stop_reason == "refusal":
+        # Haiku 5.5 runs safety classifiers that can decline a request with
+        # an ordinary HTTP 200 and no tool_use block. Mail logs are full of
+        # attack traffic, so this is a live possibility, not a theoretical one.
+        logger.warning(
+            "Triage request was declined by the model (category=%s) with %d IPs in input.",
+            getattr(getattr(response, "stop_details", None), "category", None),
             len(grouped),
         )
 
@@ -287,6 +343,7 @@ async def triage_ips(
         output_tokens=getattr(usage, "output_tokens", 0) or 0,
         cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
         cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+        model=model,
     )
     logger.info(
         "Triage complete: %d suggestions, stop=%s, in=%d out=%d cache_w=%d cache_r=%d cost=$%.4f",
