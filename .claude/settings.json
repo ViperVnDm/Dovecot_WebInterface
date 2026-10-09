@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fetch-if-stale.sh",
+            "timeout": 30,
+            "statusMessage": "Checking whether the repo needs a fetch..."
+          }
+        ]
+      }
+    ]
+  }
+}
