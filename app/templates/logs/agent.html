@@ -11,16 +11,51 @@
                 Suggestions require explicit approval.
             </p>
         </div>
+        {# The result lands in Recent Runs, so open that card — otherwise the
+           button appears to do nothing while the card is collapsed. #}
         <button hx-post="/api/agent/run-now"
                 hx-target="#agent-runs"
                 hx-swap="innerHTML"
+                @click="$dispatch('open-card', 'agent_runs')"
                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
             Run now
         </button>
     </div>
 
+    {#
+      Work first, history second, configuration last. All three start collapsed
+      so the page opens as an overview: the pending list alone can run to
+      hundreds of entries and used to push Recent Runs far below the fold.
+
+      Agent Settings is keyed `agent_config`, not `agent_settings`: browsers
+      already hold card_agent_settings=true from when it defaulted to open, and
+      a persisted value beats a changed default.
+    #}
+
+    <!-- Pending suggestions -->
+    {% call collapsible_card("Pending Suggestions", "agent_pending", open=false, badge_id="agent-pending-count") %}
+        <div id="agent-suggestions"
+             class="px-6 py-4"
+             hx-get="/api/agent/suggestions"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    {% endcall %}
+
+    <!-- Run history -->
+    {% call collapsible_card("Recent Runs", "agent_runs", open=false) %}
+        <div id="agent-runs"
+             class="px-6 py-4"
+             hx-get="/api/agent/runs"
+             hx-trigger="load, every 60s"
+             hx-swap="innerHTML">
+            <p class="text-gray-500 text-sm">Loading...</p>
+        </div>
+    {% endcall %}
+
     <!-- Settings -->
-    {% call collapsible_card("Agent Settings", "agent_settings") %}
+    {% call collapsible_card("Agent Settings", "agent_config", open=false) %}
         <div id="agent-settings"
              class="px-6 py-4"
              hx-get="/api/agent/settings"
@@ -29,33 +64,5 @@
             <p class="text-gray-500 text-sm">Loading...</p>
         </div>
     {% endcall %}
-
-    <!-- Pending suggestions -->
-    <div class="bg-white rounded-lg shadow">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">Pending Suggestions</h2>
-        </div>
-        <div id="agent-suggestions"
-              class="px-6 py-4"
-              hx-get="/api/agent/suggestions"
-              hx-trigger="load"
-              hx-swap="innerHTML">
-            <p class="text-gray-500 text-sm">Loading...</p>
-        </div>
-    </div>
-
-    <!-- Run history -->
-    <div class="bg-white rounded-lg shadow">
-        <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">Recent Runs</h2>
-        </div>
-        <div id="agent-runs"
-             class="px-6 py-4"
-             hx-get="/api/agent/runs"
-             hx-trigger="load, every 60s"
-             hx-swap="innerHTML">
-            <p class="text-gray-500 text-sm">Loading...</p>
-        </div>
-    </div>
 </div>
 {% endblock %}

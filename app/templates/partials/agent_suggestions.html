@@ -130,3 +130,7 @@
 <p class="text-sm text-gray-500">No pending suggestions.</p>
 {% endif %}
 </div>
+{# Fills the count pill in the card header (see collapsible_card's badge_id), so
+   the number is visible while the list is collapsed. Left empty at zero: the
+   pill hides itself. #}
+<span id="agent-pending-count" hx-swap-oob="innerHTML">{% if suggestions %}{{ suggestions|length }}{% endif %}</span>

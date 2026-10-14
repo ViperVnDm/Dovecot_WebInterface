@@ -270,6 +270,24 @@ async def test_approve_ban_rejected_when_target_allowlisted(auth_client, db_engi
 
 
 @pytest.mark.asyncio
+async def test_pending_count_badge_tracks_the_list(auth_client, db_engine):
+    """The out-of-band header pill: empty at zero (so it hides), else the count."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    ac, _ = auth_client
+
+    resp = await ac.get("/api/agent/suggestions")
+    assert '<span id="agent-pending-count" hx-swap-oob="innerHTML"></span>' in resp.text
+
+    async with factory() as db:
+        await _create_pending(db, "10.10.10.1")
+        await _create_pending(db, "10.10.10.2")
+
+    resp = await ac.get("/api/agent/suggestions")
+    assert '<span id="agent-pending-count" hx-swap-oob="innerHTML">2</span>' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_reject_all_marks_every_pending_rejected(auth_client, db_engine):
     from sqlalchemy.ext.asyncio import async_sessionmaker
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
