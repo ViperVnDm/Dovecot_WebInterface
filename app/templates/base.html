@@ -8,16 +8,16 @@
     <!-- CSRF token (read by the htmx:configRequest handler below) -->
     <meta name="csrf-token" content="{{ csrf_token(request) }}">
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- All assets are self-hosted and version-pinned (no CDN in the CSP).
+         Tailwind is prebuilt — see tailwind/tailwind.config.js to rebuild. -->
+    <link rel="stylesheet" href="/static/css/app.css">
 
     <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
+    <script src="/static/vendor/htmx-1.9.10.min.js"></script>
 
     <!-- Alpine.js (persist plugin must load BEFORE core so $persist exists) -->
-    <script defer src="https://unpkg.com/@alpinejs/persist@3.x.x/dist/cdn.min.js"></script>
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="/static/vendor/alpinejs-persist-3.17.5.min.js"></script>
+    <script defer src="/static/vendor/alpinejs-3.17.5.min.js"></script>
 
     <style>
         [x-cloak] { display: none !important; }

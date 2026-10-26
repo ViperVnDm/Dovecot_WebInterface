@@ -46,16 +46,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "Permissions-Policy",
             "geolocation=(), microphone=(), camera=(), payment=()",
         )
-        # CSP — relatively permissive because the templates load from CDNs.
-        # Tightening this further (and self-hosting CDN assets) is a follow-up.
+        # CSP — every asset is self-hosted (app/static/), so no third-party
+        # origin is trusted. 'unsafe-eval' remains because Alpine evaluates
+        # x-data/x-on expressions and htmx evaluates hx-trigger filters with
+        # Function(); 'unsafe-inline' because templates use inline <script>
+        # and on* handlers. Removing either means the Alpine CSP build plus
+        # moving that code into static files.
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-            "https://cdn.tailwindcss.com https://unpkg.com; "
-            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            "connect-src 'self' ws: wss:; "
+            "connect-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'",

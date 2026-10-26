@@ -1,0 +1,5 @@
+# Vendored third-party builds and generated CSS: store byte-for-byte, so they
+# stay identical to the upstream release and line-ending conversion never
+# makes them show up as modified.
+app/static/vendor/** -text
+app/static/css/app.css -text

@@ -508,3 +508,26 @@ def test_bcrypt_verifies_passlib_era_long_password():
     assert verify_password("x" * 72, h)
     assert not verify_password("x" * 71, h)
     assert not verify_password("anything", "not-a-bcrypt-hash")
+
+
+@pytest.mark.asyncio
+async def test_csp_trusts_no_third_party_origins(client):
+    """Assets are self-hosted; a CDN compromise must not be able to inject script."""
+    ac, _ = client
+    csp = (await ac.get("/login")).headers["Content-Security-Policy"]
+    assert "https:" not in csp and "unpkg" not in csp and "tailwindcss" not in csp
+    assert "connect-src 'self';" in csp
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_assets_are_served(client):
+    ac, _ = client
+    login = (await ac.get("/login")).text
+    assert "/static/css/app.css" in login
+    for path in (
+        "/static/css/app.css",
+        "/static/vendor/htmx-1.9.10.min.js",
+        "/static/vendor/alpinejs-3.17.5.min.js",
+        "/static/vendor/alpinejs-persist-3.17.5.min.js",
+    ):
+        assert (await ac.get(path)).status_code == 200, path

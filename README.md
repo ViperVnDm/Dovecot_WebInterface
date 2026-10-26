@@ -149,6 +149,23 @@ server {
 > If your proxy runs on a different host, set `--forwarded-allow-ips` to that
 > host's address (never `*`).
 
+#### Hardening the deployment
+
+This console can create mail accounts, reset passwords and edit the firewall, so treat its exposure accordingly:
+
+- **Restrict who can reach it.** Ideally only from a VPN or your own addresses. In the `server` block above:
+  ```nginx
+  location / {
+      allow 203.0.113.10;     # your admin IP(s) / VPN range
+      deny  all;
+      proxy_pass http://127.0.0.1:8000;
+      # ... proxy_set_header lines as above
+  }
+  ```
+  Add those IPs to the never-ban allowlist too.
+- **Give it its own hostname** (e.g. `admin.yourdomain.com`), not a path on a webmail vhost. Browsers isolate by origin, so an XSS in an app on the same origin would have full control of this console. With HTTPS, the session cookies use the `__Host-` prefix, so apps on *sibling* subdomains can't plant or overwrite them.
+- **Keep other web apps off its account.** The console runs as `dwa-web`, and only that account can reach the root helper. If you host PHP apps (Roundcube, PostfixAdmin, …), run them in their own PHP-FPM pool user, not `www-data`, and keep them patched. The console no longer trusts `www-data`, but nothing else on the box should share an account with anything privileged either.
+
 ### 4. Deploy updates
 
 ```bash
@@ -288,7 +305,10 @@ journalctl -u dovecot-webadmin-helper -f
 - Reserved usernames (`root`, `postfix`, `dovecot`, etc.) cannot be created through the web UI
 - IP banning validates address format and rejects loopback/wildcard addresses
 - The never-ban allowlist protects your own IPs from accidental banning
-- Session cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` (requires HTTPS in production)
+- Session cookies are `HttpOnly`, `SameSite=Strict`, `Secure` and `__Host-`-prefixed (requires HTTPS in production); only a SHA-256 digest of each session token is stored
+- CSRF tokens are bound to the session (HMAC with `SECRET_KEY`)
+- All JavaScript and CSS is self-hosted and version-pinned; the CSP allows no third-party origins
+- Python dependencies are installed from a hash-pinned lock (`requirements.txt`) — audit it with `pip-audit` before deploying
 - Login attempts are rate-limited to 5 per minute per IP
 
 ## Mail Storage Assumptions
