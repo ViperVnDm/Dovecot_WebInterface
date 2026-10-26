@@ -187,8 +187,9 @@ async def _apply_suggestion(suggestion: BanSuggestion, allowlist: list[str]) -> 
     target = suggestion.target.strip()
 
     if suggestion.action == "ban":
-        # Defense-in-depth: re-check allowlist client-side. Helper also validates.
-        if "/" not in target and is_allowlisted(target, allowlist):
+        # Re-check at apply time: the allowlist may have changed since the
+        # suggestion was written. CIDR targets are refused on any overlap.
+        if is_allowlisted(target, allowlist):
             raise _ApplyError(403, f"{target} is on the never-ban allowlist")
         try:
             await get_helper_client().ban_ip(target)
@@ -397,7 +398,7 @@ async def approve_all_ban_suggestions(
 
     for suggestion in pending:
         target = suggestion.target.strip()
-        if "/" not in target and is_allowlisted(target, allowlist):
+        if is_allowlisted(target, allowlist):
             skipped += 1
             continue
         try:

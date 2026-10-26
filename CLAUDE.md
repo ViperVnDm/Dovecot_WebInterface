@@ -19,6 +19,8 @@ FastAPI/Python web admin console for Dovecot + Postfix mail servers. Uses HTMX f
 ### Privilege Separation
 The web app (`www-data`) never runs system commands. `privileged/server.py` runs as root, listens on a Unix socket at `/run/dovecot-webadmin/helper.sock`, and exposes a small set of validated commands. `app/core/permissions.py` is the IPC client.
 
+**Managed accounts only.** `set_password`, `delete_user`, `set_quota` and `get_quota` go through `_require_mail_user()`, which requires mail-group membership, uid ≥ 1000 and a `nologin`/`false` shell — the shape `cmd_create_user` produces. A name regex plus `RESERVED_USERNAMES` is not enough: it would let the console `chpasswd` a sudo-capable login account and SSH in. A mail user who was given a real shell by hand is deliberately unmanageable from the UI.
+
 ### Helper IPC Protocol
 JSON over Unix socket. Each command is `{"cmd": "...", "params": {...}}`. The helper validates all inputs with strict regex before executing anything. Adding a new privileged operation requires: (1) adding the command handler in `privileged/server.py`, (2) adding the client method in `app/core/permissions.py`.
 
@@ -49,7 +51,7 @@ SQLite via SQLAlchemy async. Models are in `app/database.py`. No Alembic migrati
 `app/core/audit.py` `record_audit(db, ...)` adds an `AuditLog` row (the caller commits, so it shares the transaction of the change it records). Called from user CRUD (`users.py`), manual IP ban/unban (`logs.py`), alert-rule create/update/delete/toggle (`alerts.py`), and agent suggestion approve/reject (`agent.py` / `log_agent.py`). Viewable read-only at `/audit` via `/partials/audit/entries` (outer-joins `AdminUser` for the username; `user_id=None` renders as "system"). The source IP is `request.client.host`, accurate only because uvicorn runs with `--proxy-headers --forwarded-allow-ips=127.0.0.1` behind nginx (set in the systemd unit).
 
 ### IP Banning
-UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 addresses and CIDR ranges (e.g., `10.0.0.0/8`). Validation in the helper: `_validate_ip_or_cidr()` checks format, octet ranges, prefix length (0-32), and rejects loopback/wildcard. `cmd_list_banned_ips()` parses both CIDR and plain IP entries from `ufw status` output.
+UFW-based (`ufw insert 1 deny from <target>`). Supports both individual IPv4 addresses and CIDR ranges (e.g., `10.0.0.0/16`). Validation in the helper: `_validate_ip_or_cidr()` parses with `ipaddress` and, for bans, refuses anything broader than `MIN_BAN_PREFIX` (/16) and any range overlapping loopback/wildcard/link-local/multicast/reserved — without the floor, `1.0.0.0/0` passed and would have firewalled off the whole internet, admin SSH included. Unban passes `for_ban=False` so rules that predate the policy can still be removed. On the app side `is_allowlisted()` is an *overlap* test, so a CIDR ban that would cover an allowlisted address is refused on the manual and agent paths alike. `cmd_list_banned_ips()` parses both CIDR and plain IP entries from `ufw status` output.
 
 **CIDR consolidation:** When banning a CIDR range, individual IPs that fall within that range are automatically unbanned from UFW. The same consolidation applies to the never-ban allowlist — adding a CIDR removes covered individual IPs from the list.
 

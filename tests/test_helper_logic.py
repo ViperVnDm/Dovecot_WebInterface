@@ -21,8 +21,11 @@ from privileged.server import (
     validate_username,
     validate_queue_id,
     _validate_ip,
+    _validate_ip_or_cidr,
+    _require_mail_user,
     CommandError,
 )
+from privileged import server
 
 
 class TestValidateUsername:
@@ -105,6 +108,88 @@ class TestValidateIp:
 
     def test_strips_whitespace(self):
         assert _validate_ip(" 1.2.3.4 ") == "1.2.3.4"
+
+
+class TestValidateIpOrCidr:
+    def test_narrow_cidr_ok(self):
+        assert _validate_ip_or_cidr("45.33.0.0/16") == "45.33.0.0/16"
+        assert _validate_ip_or_cidr("45.33.12.0/24") == "45.33.12.0/24"
+
+    def test_broad_cidr_rejected(self):
+        # /0 from a non-zero base address used to pass and block everything.
+        for value in ("1.0.0.0/0", "8.0.0.0/1", "45.32.0.0/15"):
+            with pytest.raises(CommandError):
+                _validate_ip_or_cidr(value)
+
+    def test_special_ranges_rejected(self):
+        for value in ("127.0.0.0/16", "0.0.0.0/16", "169.254.0.0/16", "224.0.0.0/24"):
+            with pytest.raises(CommandError):
+                _validate_ip_or_cidr(value)
+
+    def test_unban_skips_breadth_policy(self):
+        # A rule that predates the policy must still be removable.
+        assert _validate_ip_or_cidr("8.0.0.0/8", for_ban=False) == "8.0.0.0/8"
+
+    def test_bad_format_rejected_even_for_unban(self):
+        for value in ("1.2.3.4/33", "300.0.0.0/16", "1.2.3.4/16; rm"):
+            with pytest.raises(CommandError):
+                _validate_ip_or_cidr(value, for_ban=False)
+
+
+class TestRequireMailUser:
+    """set_password / delete_user / set_quota may only touch mail-only accounts."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_accounts(self, monkeypatch):
+        import grp
+        import pwd
+
+        def entry(name, uid, gid, shell):
+            return pwd.struct_passwd((name, "x", uid, gid, "", f"/home/{name}", shell))
+
+        accounts = {
+            "alice": entry("alice", 1001, 1001, "/usr/sbin/nologin"),
+            "ubuntu": entry("ubuntu", 1000, 1000, "/bin/bash"),
+            "svc": entry("svc", 999, 999, "/usr/sbin/nologin"),
+            "outsider": entry("outsider", 1002, 1002, "/usr/sbin/nologin"),
+        }
+
+        def getpwnam(name):
+            return accounts[name]
+
+        monkeypatch.setattr(server.pwd, "getpwnam", getpwnam)
+        monkeypatch.setattr(
+            server.grp, "getgrnam",
+            lambda name: grp.struct_group(("mail", "x", 8, ["alice", "ubuntu", "svc"])),
+        )
+
+    def test_mail_account_allowed(self):
+        assert _require_mail_user("alice").pw_name == "alice"
+
+    def test_login_shell_refused(self):
+        with pytest.raises(CommandError) as exc:
+            _require_mail_user("ubuntu")
+        assert exc.value.code == 403
+
+    def test_system_uid_refused(self):
+        with pytest.raises(CommandError):
+            _require_mail_user("svc")
+
+    def test_not_in_mail_group_refused(self):
+        with pytest.raises(CommandError):
+            _require_mail_user("outsider")
+
+    def test_missing_user_is_404(self):
+        with pytest.raises(CommandError) as exc:
+            _require_mail_user("ghost")
+        assert exc.value.code == 404
+
+    def test_set_password_refuses_login_account(self, monkeypatch):
+        ran = []
+        monkeypatch.setattr(server, "run_command", lambda *a, **k: ran.append(a))
+        with pytest.raises(CommandError):
+            server.cmd_set_password({"username": "ubuntu", "password": "longenough"})
+        assert ran == []
 
 
 # ── Log level detection (imported from the helper — no duplicated copy) ───────

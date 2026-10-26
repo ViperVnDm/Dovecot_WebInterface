@@ -34,21 +34,22 @@ async def load_allowlist(db: AsyncSession) -> list[str]:
     return _parse_allowlist(setting.value) if setting else []
 
 
-def is_allowlisted(ip: str, allowlist: list[str]) -> bool:
-    """Return True if ip matches any allowlist entry (exact IP or CIDR)."""
+def is_allowlisted(target: str, allowlist: list[str]) -> bool:
+    """Return True if target (an IP or a CIDR) overlaps any allowlist entry.
+
+    A CIDR target counts as allowlisted if it overlaps an entry at all, not
+    only if it is contained in one: banning 10.0.0.0/16 would also block an
+    allowlisted 10.0.5.5, which is exactly what the allowlist exists to stop.
+    """
     try:
-        ip_addr = ipaddress.ip_address(ip)
+        network = ipaddress.ip_network(target, strict=False)
     except ValueError:
         return False
     for entry in allowlist:
         try:
-            if "/" in entry:
-                if ip_addr in ipaddress.ip_network(entry, strict=False):
-                    return True
-            else:
-                if ip_addr == ipaddress.ip_address(entry):
-                    return True
-        except ValueError:
+            if network.overlaps(ipaddress.ip_network(entry, strict=False)):
+                return True
+        except (ValueError, TypeError):  # TypeError: IPv4 vs IPv6
             continue
     return False
 
@@ -149,16 +150,16 @@ async def ban_ip(
 ):
     """Block an IP address or CIDR range via UFW (rejected if allowlisted)."""
     target = ip.strip()
-    # For single IPs, check allowlist; for CIDRs, validate format
     if "/" in target:
         try:
             ipaddress.ip_network(target, strict=False)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid CIDR: {target}")
-    else:
-        allowlist = await load_allowlist(db)
-        if is_allowlisted(target, allowlist):
-            raise HTTPException(status_code=403, detail=f"{target} is in the never-ban allowlist")
+    # Applies to CIDRs too: a range that overlaps an allowlisted entry would
+    # block it. The helper separately enforces a minimum prefix length.
+    allowlist = await load_allowlist(db)
+    if is_allowlisted(target, allowlist):
+        raise HTTPException(status_code=403, detail=f"{target} overlaps the never-ban allowlist")
 
     helper = get_helper_client()
     try:

@@ -46,6 +46,15 @@ class TestIsAllowlisted:
     def test_invalid_ip_returns_false(self):
         assert not is_allowlisted("not-an-ip", ["1.2.3.4"])
 
+    def test_cidr_target_overlapping_entry(self):
+        # Banning a range must be refused if it would cover an allowlisted IP.
+        assert is_allowlisted("10.0.0.0/16", ["10.0.5.5"])
+        assert is_allowlisted("10.0.0.0/16", ["10.0.0.0/8"])
+        assert not is_allowlisted("10.1.0.0/16", ["10.0.5.5"])
+
+    def test_mixed_ip_versions_do_not_raise(self):
+        assert not is_allowlisted("1.2.3.4", ["2001:db8::/32"])
+
     def test_server_ip_in_allowlist(self):
         # Simulates the server's own public IP being protected
         assert is_allowlisted("199.19.75.246", ["199.19.75.246"])
@@ -143,6 +152,15 @@ async def test_ban_allowlisted_ip_rejected(auth_client):
     await ac.post("/api/logs/allowlist", data={"entry": "199.19.75.246"})
     # Try to ban it
     resp = await ac.post("/api/logs/ban-ip", data={"ip": "199.19.75.246"})
+    assert resp.status_code == 403
+    mock_helper.ban_ip.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ban_cidr_overlapping_allowlist_rejected(auth_client):
+    ac, mock_helper = auth_client
+    await ac.post("/api/logs/allowlist", data={"entry": "199.19.75.246"})
+    resp = await ac.post("/api/logs/ban-ip", data={"ip": "199.19.0.0/16"})
     assert resp.status_code == 403
     mock_helper.ban_ip.assert_not_called()
 

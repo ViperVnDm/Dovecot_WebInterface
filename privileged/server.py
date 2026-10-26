@@ -10,6 +10,7 @@ SECURITY: This is a privilege boundary. All inputs must be validated.
 
 import asyncio
 import grp
+import ipaddress
 import json
 import logging
 import os
@@ -190,11 +191,7 @@ def cmd_delete_user(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(params.get("username", ""))
     delete_mail = bool(params.get("delete_mail", False))
 
-    # Check if user exists
-    try:
-        pwd.getpwnam(username)
-    except KeyError:
-        raise CommandError(f"User '{username}' not found", 404)
+    _require_mail_user(username)
 
     # Delete user
     cmd = ["userdel"]
@@ -233,11 +230,7 @@ def cmd_set_password(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(params.get("username", ""))
     password = _validate_password(params.get("password", ""))
 
-    # Check if user exists
-    try:
-        pwd.getpwnam(username)
-    except KeyError:
-        raise CommandError(f"User '{username}' not found", 404)
+    _require_mail_user(username)
 
     stdout, stderr, rc = run_command(
         ["chpasswd"],
@@ -256,11 +249,7 @@ def cmd_set_quota(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(params.get("username", ""))
     quota_mb = int(params.get("quota_mb", 0))
 
-    # Check if user exists
-    try:
-        pwd.getpwnam(username)
-    except KeyError:
-        raise CommandError(f"User '{username}' not found", 404)
+    _require_mail_user(username)
 
     # Set quota via doveadm (if available)
     # This assumes Dovecot is configured with quota plugin
@@ -283,10 +272,7 @@ def cmd_get_quota(params: dict[str, Any]) -> dict[str, Any]:
     """Get a user's quota usage."""
     username = validate_username(params.get("username", ""))
 
-    try:
-        pwd.getpwnam(username)
-    except KeyError:
-        raise CommandError(f"User '{username}' not found", 404)
+    _require_mail_user(username)
 
     stdout, stderr, rc = run_command([
         "doveadm", "quota", "get", "-u", username,
@@ -308,6 +294,19 @@ def cmd_get_quota(params: dict[str, Any]) -> dict[str, Any]:
     return quota_info
 
 
+def _mail_group() -> tuple[int | None, set[str]]:
+    """Return (gid, supplementary member names) of MAIL_GROUP."""
+    try:
+        mail_group = grp.getgrnam(MAIL_GROUP)
+        return mail_group.gr_gid, set(mail_group.gr_mem)
+    except KeyError:
+        return None, set()
+
+
+def _in_mail_group(user, mail_gid: int | None, mail_members: set[str]) -> bool:
+    return bool((mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members))
+
+
 def _iter_mail_users():
     """Yield pwd entries for users in the mail group, excluding reserved names.
 
@@ -315,17 +314,43 @@ def _iter_mail_users():
     in one place. Does NOT touch the filesystem — callers that need sizes call
     _user_mail_size() themselves (that walk is the expensive part).
     """
-    try:
-        mail_group = grp.getgrnam(MAIL_GROUP)
-        mail_gid = mail_group.gr_gid
-        mail_members = set(mail_group.gr_mem)
-    except KeyError:
-        mail_gid = None
-        mail_members = set()
+    mail_gid, mail_members = _mail_group()
     for user in pwd.getpwall():
-        in_mail_group = (mail_gid and user.pw_gid == mail_gid) or (user.pw_name in mail_members)
-        if in_mail_group and user.pw_name not in RESERVED_USERNAMES:
+        if _in_mail_group(user, mail_gid, mail_members) and user.pw_name not in RESERVED_USERNAMES:
             yield user
+
+
+# Accounts below this uid are system accounts; never managed from the web UI.
+MIN_MAIL_UID = 1000
+_NO_LOGIN_SHELLS = frozenset({
+    "/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false",
+})
+
+
+def _require_mail_user(username: str):
+    """Return the pwd entry for a mail-only account, or raise CommandError.
+
+    The commands that change or remove an account (set_password, delete_user,
+    set_quota) must only ever touch accounts this console manages. A regex on
+    the name plus RESERVED_USERNAMES is not enough: without this, an admin
+    session (or anything else that reaches the socket) could chpasswd a
+    sudo-capable login account such as `ubuntu` and then SSH in. A managed
+    account is in the mail group, has a regular uid, and cannot log in —
+    which is exactly what cmd_create_user produces.
+    """
+    try:
+        user = pwd.getpwnam(username)
+    except KeyError:
+        raise CommandError(f"User '{username}' not found", 404)
+    mail_gid, mail_members = _mail_group()
+    if (
+        not _in_mail_group(user, mail_gid, mail_members)
+        or user.pw_uid < MIN_MAIL_UID
+        or user.pw_shell not in _NO_LOGIN_SHELLS
+    ):
+        logger.warning(f"Refused to manage non-mail account: {username}")
+        raise CommandError(f"User '{username}' is not a managed mail account", 403)
+    return user
 
 
 def cmd_count_users(params: dict[str, Any]) -> dict[str, Any]:
@@ -871,8 +896,6 @@ def _validate_ip(ip: str) -> str:
     a hostile internal host) but does reject ranges that would lock the
     server out of itself or are nonsensical to ban.
     """
-    import ipaddress
-
     ip = (ip or "").strip()
     try:
         addr = ipaddress.IPv4Address(ip)
@@ -892,20 +915,43 @@ def _validate_ip(ip: str) -> str:
     return str(addr)
 
 
-def _validate_ip_or_cidr(value: str) -> str:
-    """Validate an IPv4 address or CIDR range. Returns the cleaned value."""
-    value = value.strip()
+# Broadest range a ban may cover. Without a floor, `1.0.0.0/0` passes a
+# syntax check and `ufw insert 1 deny from` it blocks the whole internet,
+# admin SSH included. /16 is already 65,536 addresses.
+MIN_BAN_PREFIX = 16
+
+_NEVER_BAN_NETWORKS = (
+    ipaddress.IPv4Network("0.0.0.0/8"),
+    ipaddress.IPv4Network("127.0.0.0/8"),
+    ipaddress.IPv4Network("169.254.0.0/16"),
+    ipaddress.IPv4Network("224.0.0.0/3"),  # multicast + reserved
+)
+
+
+def _validate_ip_or_cidr(value: str, *, for_ban: bool = True) -> str:
+    """Validate an IPv4 address or CIDR range. Returns the cleaned value.
+
+    `for_ban=False` (unban) skips the breadth/range policy so a rule that
+    predates it — or was added by hand — can still be removed.
+    """
+    value = (value or "").strip()
     if "/" in value:
         if not CIDR_RE.fullmatch(value):
             raise CommandError("Invalid CIDR format", 400)
-        ip_part, prefix = value.rsplit("/", 1)
-        parts = ip_part.split(".")
-        if not all(0 <= int(p) <= 255 for p in parts):
-            raise CommandError("Invalid CIDR: octet out of range", 400)
-        if not (0 <= int(prefix) <= 32):
-            raise CommandError("Invalid CIDR: prefix must be 0-32", 400)
-        if value.startswith("127.") or value.startswith("0."):
-            raise CommandError("Cannot ban loopback or wildcard range", 400)
+        try:
+            network = ipaddress.IPv4Network(value, strict=False)
+        except ValueError:
+            raise CommandError("Invalid CIDR", 400)
+        if for_ban:
+            if network.prefixlen < MIN_BAN_PREFIX:
+                raise CommandError(
+                    f"CIDR too broad: prefix must be /{MIN_BAN_PREFIX} or longer", 400
+                )
+            if any(network.overlaps(n) for n in _NEVER_BAN_NETWORKS):
+                raise CommandError(
+                    "Cannot ban loopback, wildcard, link-local, multicast or reserved range",
+                    400,
+                )
         return value
     return _validate_ip(value)
 
@@ -922,7 +968,7 @@ def cmd_ban_ip(params: dict[str, Any]) -> dict[str, Any]:
 
 def cmd_unban_ip(params: dict[str, Any]) -> dict[str, Any]:
     """Remove a UFW ban for an IP address or CIDR range."""
-    target = _validate_ip_or_cidr(params.get("ip", ""))
+    target = _validate_ip_or_cidr(params.get("ip", ""), for_ban=False)
     stdout, stderr, rc = run_command(["ufw", "delete", "deny", "from", target])
     if rc != 0:
         raise CommandError(f"Failed to unban {target}: {stderr.strip()}", 500)
