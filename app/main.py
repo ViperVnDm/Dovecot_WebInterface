@@ -20,7 +20,11 @@ from app.services.log_agent import agent_loop
 
 # Import routers
 from app.api import auth, users, queue, logs, storage, partials, alerts, agent
-from app.core.security import get_current_user, cleanup_expired_sessions_loop
+from app.core.security import (
+    cleanup_expired_sessions_loop,
+    csrf_token_for_session,
+    get_current_user,
+)
 from app.core.limiter import limiter
 from app.core.middleware import (
     CSRFMiddleware,
@@ -111,7 +115,9 @@ async def unauthenticated_redirect(request: Request, exc: HTTPException):
 app.add_middleware(SecurityHeadersMiddleware, hsts=not settings.debug)
 app.add_middleware(
     CSRFMiddleware,
-    cookie_name=settings.csrf_cookie_name,
+    cookie_name=settings.csrf_cookie,
+    session_cookie_name=settings.session_cookie,
+    bind=csrf_token_for_session,
     secure=settings.cookie_secure,
 )
 
@@ -137,7 +143,7 @@ app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 async def root(request: Request):
     """Redirect root to dashboard or login."""
     # Check if user is authenticated
-    token = request.cookies.get(settings.session_cookie_name)
+    token = request.cookies.get(settings.session_cookie)
     if token:
         return RedirectResponse(url="/dashboard", status_code=302)
     return RedirectResponse(url="/login", status_code=302)

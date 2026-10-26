@@ -64,6 +64,19 @@ class Settings(BaseSettings):
     log_agent_daily_cost_cap_usd: float = 1.0
     log_agent_max_ips_per_run: int = 50
 
+    # Cookie names actually sent. With Secure cookies they carry the `__Host-`
+    # prefix, which browsers only accept from this exact host over HTTPS with
+    # Path=/ and no Domain — so another app on a sibling subdomain (webmail,
+    # say) can neither set nor overwrite them. Plain-HTTP dev/test can't use
+    # the prefix, so it falls back to the bare names there.
+    @property
+    def session_cookie(self) -> str:
+        return f"__Host-{self.session_cookie_name}" if self.cookie_secure else self.session_cookie_name
+
+    @property
+    def csrf_cookie(self) -> str:
+        return f"__Host-{self.csrf_cookie_name}" if self.cookie_secure else self.csrf_cookie_name
+
     @field_validator("secret_key")
     @classmethod
     def _check_secret_key(cls, v: str, info) -> str:

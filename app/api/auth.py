@@ -116,11 +116,13 @@ async def login(
     # Set session cookie and redirect
     response = RedirectResponse(url=next_url, status_code=302)
     response.set_cookie(
-        key=settings.session_cookie_name,
+        key=settings.session_cookie,
         value=session_token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        # Strict: an admin console has no cross-site entry flow worth a
+        # session. A link from an alert email lands on /login?next=… once.
+        samesite="strict",
         path="/",
         max_age=settings.session_expire_hours * 3600,
     )
@@ -134,17 +136,17 @@ async def logout(
 ):
     """Destroy session and redirect to login."""
     settings = get_settings()
-    session_token = request.cookies.get(settings.session_cookie_name)
+    session_token = request.cookies.get(settings.session_cookie)
     if session_token:
         await delete_session(db, session_token)
 
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie(
-        settings.session_cookie_name,
+        settings.session_cookie,
         path="/",
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite="strict",
     )
     return response
 

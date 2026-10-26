@@ -153,4 +153,8 @@ async def auth_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 302, f"Login failed: {resp.status_code} {resp.text}"
+    # The CSRF token is bound to the session (see CSRFMiddleware), so the
+    # anonymous one from /login is now stale. Like a browser following the
+    # post-login redirect, the next GET re-issues it.
+    await _prime_csrf(ac)
     return ac, mock_helper

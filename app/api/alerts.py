@@ -224,6 +224,11 @@ async def update_alert_settings(
     db: AsyncSession = Depends(get_db),
 ):
     """Update alert settings."""
+    # smtp_from becomes the From: header of every alert mail.
+    if smtp_from.strip():
+        smtp_from = _validate_email_target(smtp_from)
+    if any(ch in smtp_host for ch in ("\r", "\n", "\x00")):
+        raise HTTPException(400, "Invalid SMTP host")
     updates = {
         SETTING_CHECK_INTERVAL: str(check_interval),
         SETTING_SMTP_FROM: smtp_from.strip(),

@@ -48,7 +48,7 @@
                 {% endif %}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                <button onclick="openEditUser('{{ user.username }}')"
+                <button data-username="{{ user.username }}" onclick="openEditUser(this.dataset.username)"
                         class="text-blue-600 hover:text-blue-900">
                     Edit
                 </button>

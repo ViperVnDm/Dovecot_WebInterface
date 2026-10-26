@@ -6,9 +6,9 @@ import asyncio
 import getpass
 import sys
 
-from app.database import init_db, create_initial_admin, async_session, AdminUser
+from app.database import init_db, create_initial_admin, async_session, AdminUser, Session
 from app.core.security import hash_password
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 
 async def cmd_init_db(args):
@@ -115,8 +115,11 @@ async def cmd_change_password(args):
             sys.exit(1)
 
         admin.password_hash = hash_password(password)
+        # A password change is usually a response to a suspected compromise,
+        # so existing logins must not survive it.
+        ended = await session.execute(delete(Session).where(Session.user_id == admin.id))
         await session.commit()
-        print(f"Password changed for '{args.username}'.")
+        print(f"Password changed for '{args.username}'; {ended.rowcount} session(s) ended.")
 
 
 def main():

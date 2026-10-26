@@ -170,7 +170,7 @@
 <script>
 function openEditUser(username) {
     document.getElementById('edit-username-label').textContent = username;
-    document.getElementById('edit-user-form').setAttribute('hx-post', '/api/users/' + username + '/password');
+    document.getElementById('edit-user-form').setAttribute('hx-post', '/api/users/' + encodeURIComponent(username) + '/password');
     htmx.process(document.getElementById('edit-user-form'));
     document.getElementById('edit-user-modal').classList.remove('hidden');
 }

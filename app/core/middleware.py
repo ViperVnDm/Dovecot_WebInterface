@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import secrets
+from typing import Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -68,12 +69,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
-    """Double-submit-cookie CSRF protection.
+    """Double-submit-cookie CSRF protection, bound to the session.
 
-    On safe requests we ensure a CSRF token cookie exists.
     On unsafe requests (POST/PUT/PATCH/DELETE) we require either:
       - an `X-CSRF-Token` header that matches the cookie, OR
       - a form field named `csrf_token` that matches the cookie.
+
+    Once the client has a session, the token must additionally equal
+    `bind(session_token)` (HMAC with SECRET_KEY — see
+    `csrf_token_for_session`). A plain double-submit cookie is only as strong
+    as the guarantee that an attacker can't *write* that cookie; binding it to
+    the HttpOnly session cookie removes that dependency. A client whose cookie
+    doesn't match (e.g. the anonymous one from the login page) is re-issued
+    the bound token on its next request, which is the GET that follows login.
+
+    The token for this request is put on `request.state.csrf_token` *before*
+    the route runs, so the page being rendered embeds the token the response
+    is about to set.
 
     The login endpoint is exempt because it has no session yet — login is
     protected by rate limiting instead.
@@ -83,15 +95,21 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         self,
         app: ASGIApp,
         *,
-        cookie_name: str = "dwa_csrf",
+        cookie_name: str,
+        session_cookie_name: str,
+        bind: Callable[[str], str],
         secure: bool = True,
     ) -> None:
         super().__init__(app)
         self._cookie_name = cookie_name
+        self._session_cookie_name = session_cookie_name
+        self._bind = bind
         self._secure = secure
 
     async def dispatch(self, request: Request, call_next):
         token_cookie = request.cookies.get(self._cookie_name)
+        session_token = request.cookies.get(self._session_cookie_name)
+        expected = self._bind(session_token) if session_token else None
 
         if request.method not in SAFE_METHODS and request.url.path not in CSRF_EXEMPT_PATHS:
             header_token = request.headers.get("X-CSRF-Token")
@@ -106,39 +124,35 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     except Exception:
                         form_token = None
             submitted = header_token or form_token
-            if not _tokens_match(token_cookie or "", submitted or ""):
+            if not _tokens_match(token_cookie or "", submitted or "") or (
+                expected is not None and not _tokens_match(token_cookie or "", expected)
+            ):
                 return JSONResponse(
                     {"error": "CSRF token missing or invalid"},
                     status_code=403,
                 )
 
+        token = expected or token_cookie or _new_token()
+        request.state.csrf_token = token
+
         response: Response = await call_next(request)
 
-        if not token_cookie:
-            new_token = _new_token()
+        if token != token_cookie:
             # Cookie is NOT HttpOnly — by design, JS reads it to send the
             # X-CSRF-Token header. Pair with SameSite=Strict to neutralise
             # cross-site abuse.
             response.set_cookie(
                 key=self._cookie_name,
-                value=new_token,
+                value=token,
                 httponly=False,
                 secure=self._secure,
                 samesite="strict",
                 path="/",
                 max_age=60 * 60 * 24,
             )
-            # Make the new token visible to the current response context too,
-            # so the rendered page (e.g. /login) can embed it.
-            request.state.csrf_token = new_token
-        else:
-            request.state.csrf_token = token_cookie
         return response
 
 
 def get_csrf_token(request: Request) -> str:
     """Return the active CSRF token for use in templates."""
-    token = getattr(request.state, "csrf_token", None)
-    if token:
-        return token
-    return request.cookies.get("dwa_csrf", "")
+    return getattr(request.state, "csrf_token", "") or ""

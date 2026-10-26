@@ -409,3 +409,102 @@ async def test_docs_disabled_in_production(client):
     assert r1.status_code == 404
     assert r2.status_code == 404
 
+
+
+# ── Session storage, CSRF binding, cookie prefixes ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_session_token_stored_hashed(auth_client, db_engine):
+    """The DB holds only a digest of the session token, never the cookie value."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.core.security import hash_session_token
+    from app.database import Session
+
+    ac, _ = auth_client
+    cookie = ac.cookies.get("dwa_session")
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        stored = (await db.execute(select(Session.session_token))).scalars().all()
+    assert cookie not in stored
+    assert hash_session_token(cookie) in stored
+
+
+@pytest.mark.asyncio
+async def test_csrf_token_from_before_login_rejected(client):
+    """After login, the anonymous double-submit pair no longer validates."""
+    ac, _ = client
+    anon = ac.headers["X-CSRF-Token"]
+    resp = await ac.post(
+        "/login",
+        data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    # A cookie+header pair that match each other but aren't bound to the session
+    # (what an attacker who can plant cookies would send).
+    ac.cookies.delete("dwa_csrf")
+    ac.cookies.set("dwa_csrf", anon)
+    resp = await ac.post(
+        "/api/logs/allowlist", data={"entry": "1.2.3.4"}, headers={"X-CSRF-Token": anon}
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_csrf_token_reissued_bound_after_login(auth_client):
+    """auth_client re-primes after login; the reissued token is the bound one."""
+    from app.core.security import csrf_token_for_session
+
+    ac, _ = auth_client
+    assert ac.headers["X-CSRF-Token"] == csrf_token_for_session(ac.cookies.get("dwa_session"))
+    resp = await ac.post("/api/logs/allowlist", data={"entry": "1.2.3.4"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rendered_page_embeds_the_token_it_sets(auth_client):
+    """The meta tag must carry the token the same response sets as a cookie."""
+    from app.core.security import csrf_token_for_session
+
+    ac, _ = auth_client
+    resp = await ac.get("/dashboard")
+    expected = csrf_token_for_session(ac.cookies.get("dwa_session"))
+    assert f'name="csrf-token" content="{expected}"' in resp.text
+
+
+def test_secure_cookies_use_host_prefix():
+    from app.config import Settings
+
+    secure = Settings(cookie_secure=True)
+    assert secure.session_cookie == "__Host-dwa_session"
+    assert secure.csrf_cookie == "__Host-dwa_csrf"
+    plain = Settings(cookie_secure=False)
+    assert plain.session_cookie == "dwa_session"
+
+
+@pytest.mark.asyncio
+async def test_session_cookie_is_samesite_strict(client):
+    ac, _ = client
+    resp = await ac.post(
+        "/login",
+        data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+        follow_redirects=False,
+    )
+    set_cookie = [v for k, v in resp.headers.multi_items() if k == "set-cookie"]
+    session_cookie = next(c for c in set_cookie if c.startswith("dwa_session="))
+    assert "samesite=strict" in session_cookie.lower()
+
+
+def test_bcrypt_verifies_passlib_era_long_password():
+    """passlib truncated to 72 bytes silently; bcrypt>=5 raises. Both forms
+    of a long password must still verify against the stored hash."""
+    from app.core.security import hash_password, verify_password
+
+    long_pw = "x" * 100
+    h = hash_password(long_pw)
+    assert verify_password(long_pw, h)
+    assert verify_password("x" * 72, h)
+    assert not verify_password("x" * 71, h)
+    assert not verify_password("anything", "not-a-bcrypt-hash")

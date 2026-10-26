@@ -280,7 +280,7 @@ async def logs_websocket(websocket: WebSocket):
     logs page polls instead), but the auth gate is covered by a security test.
     """
     settings = get_settings()
-    token = websocket.cookies.get(settings.session_cookie_name)
+    token = websocket.cookies.get(settings.session_cookie)
     if not token:
         await websocket.close(code=4401)  # custom: unauthenticated
         return
