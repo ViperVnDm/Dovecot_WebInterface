@@ -39,9 +39,12 @@ MAIL_SPOOL_PATH = Path(os.environ.get("MAIL_SPOOL_PATH", "/var/mail"))
 AUTH_LOG_PATH = Path(os.environ.get("AUTH_LOG_PATH", "/var/log/auth.log"))
 UFW_LOG_PATH = Path(os.environ.get("UFW_LOG_PATH", "/var/log/ufw.log"))
 
-# Allowed peer username for SO_PEERCRED check (defaults to www-data; override
-# with HELPER_ALLOWED_PEER for testing or non-standard deployments).
-ALLOWED_PEER_USER = os.environ.get("HELPER_ALLOWED_PEER", "www-data")
+# Allowed peer username for SO_PEERCRED check, and the group that owns the
+# socket. Deliberately a dedicated account rather than www-data: www-data is
+# shared with nginx and usually PHP-FPM, so trusting it would hand the helper
+# to anything that gets code execution in a PHP app on the same box.
+ALLOWED_PEER_USER = os.environ.get("HELPER_ALLOWED_PEER", "dwa-web")
+SOCKET_GROUP = os.environ.get("HELPER_SOCKET_GROUP", "dwa-web")
 
 # Validation patterns
 USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
@@ -53,7 +56,7 @@ CIDR_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2})\b")
 RESERVED_USERNAMES = frozenset([
     "root", "admin", "postfix", "dovecot", "mail", "nobody", "daemon",
     "bin", "sys", "sync", "games", "man", "lp", "news", "uucp",
-    "proxy", "www-data", "backup", "list", "irc", "gnats", "sshd",
+    "proxy", "www-data", "dwa-web", "backup", "list", "irc", "gnats", "sshd",
 ])
 
 
@@ -1044,7 +1047,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
     # Verify connecting peer via SO_PEERCRED (defense in depth on top of
     # filesystem permissions). Only processes running as root or the
-    # allowed peer user (typically www-data) may issue commands.
+    # allowed peer user (dwa-web) may issue commands.
     try:
         import socket as _socket
         import struct
@@ -1132,13 +1135,13 @@ async def main():
     # Start server
     server = await asyncio.start_unix_server(handle_client, path=str(SOCKET_PATH))
 
-    # Set socket permissions (allow www-data to connect)
+    # Set socket permissions (allow the web app's group to connect)
     os.chmod(SOCKET_PATH, 0o660)
     try:
-        www_data_gid = grp.getgrnam("www-data").gr_gid
-        os.chown(SOCKET_PATH, 0, www_data_gid)
+        socket_gid = grp.getgrnam(SOCKET_GROUP).gr_gid
+        os.chown(SOCKET_PATH, 0, socket_gid)
     except KeyError:
-        logger.warning("www-data group not found, socket permissions may be incorrect")
+        logger.warning(f"{SOCKET_GROUP} group not found, socket permissions may be incorrect")
 
     logger.info(f"Privileged helper listening on {SOCKET_PATH}")
 

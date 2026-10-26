@@ -5,8 +5,10 @@ Requires=dovecot-webadmin-helper.service
 
 [Service]
 Type=exec
-User=www-data
-Group=www-data
+# Dedicated account (created by setup.sh / update.sh), not www-data — see
+# "Privilege Separation" in CLAUDE.md.
+User=dwa-web
+Group=dwa-web
 WorkingDirectory=/opt/dovecot-webadmin
 Environment="PATH=/opt/dovecot-webadmin/venv/bin"
 EnvironmentFile=-/opt/dovecot-webadmin/.env
@@ -25,9 +27,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/dovecot-webadmin/data
-
-# Allow access to helper socket
-SupplementaryGroups=www-data
 
 [Install]
 WantedBy=multi-user.target

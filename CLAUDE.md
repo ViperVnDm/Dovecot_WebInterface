@@ -17,7 +17,9 @@ FastAPI/Python web admin console for Dovecot + Postfix mail servers. Uses HTMX f
 ## Key Architecture Decisions
 
 ### Privilege Separation
-The web app (`www-data`) never runs system commands. `privileged/server.py` runs as root, listens on a Unix socket at `/run/dovecot-webadmin/helper.sock`, and exposes a small set of validated commands. `app/core/permissions.py` is the IPC client.
+The web app (`dwa-web`) never runs system commands. `privileged/server.py` runs as root, listens on a Unix socket at `/run/dovecot-webadmin/helper.sock`, and exposes a small set of validated commands. `app/core/permissions.py` is the IPC client.
+
+**Why `dwa-web` and a root-owned tree.** The app used to run as `www-data`, which nginx and PHP-FPM share, and `setup.sh`/`update.sh` `chown -R`'d the whole install to it. Any `www-data` process (e.g. a PHP RCE in webmail) could then talk to the helper socket directly, write `data/admin.db` (forge a session), or edit `venv/`, `.env` or `update.sh` — all of which root executes or loads. Now `apply_ownership()` (duplicated in `setup.sh` and `update.sh` — keep them in sync) makes everything `root:root` except `data/` (`dwa-web`, 700) and `.env` (`root:dwa-web`, 640). The helper runs as `/usr/bin/python3 -I privileged/server.py`: it is stdlib-only, so it doesn't need the venv, and `-I` keeps `PYTHON*` env vars and the cwd off its import path. Keep the helper free of third-party imports.
 
 **Managed accounts only.** `set_password`, `delete_user`, `set_quota` and `get_quota` go through `_require_mail_user()`, which requires mail-group membership, uid ≥ 1000 and a `nologin`/`false` shell — the shape `cmd_create_user` produces. A name regex plus `RESERVED_USERNAMES` is not enough: it would let the console `chpasswd` a sudo-capable login account and SSH in. A mail user who was given a real shell by hand is deliberately unmanageable from the UI.
 

@@ -16,7 +16,7 @@ A web-based administration interface for Dovecot/Postfix mail servers. Built wit
 
 ```
 ┌─────────────────────┐    Unix socket    ┌──────────────────────┐
-│  Web App (www-data) │ ◄────────────── ► │ Privileged Helper    │
+│  Web App (dwa-web)  │ ◄────────────── ► │ Privileged Helper    │
 │  FastAPI / uvicorn  │                   │ (root)               │
 │  port 127.0.0.1:8000│                   │ privileged/server.py │
 └─────────────────────┘                   └──────────────────────┘
@@ -31,7 +31,7 @@ A web-based administration interface for Dovecot/Postfix mail servers. Built wit
   - storage_history
 ```
 
-The web app runs as `www-data` and never calls system commands directly. All privileged operations go through the helper daemon over a Unix socket with strict input validation and command allowlisting.
+The web app runs as a dedicated `dwa-web` account (not `www-data`, which is shared with nginx and PHP-FPM) and never calls system commands directly. All privileged operations go through the helper daemon over a Unix socket with strict input validation and command allowlisting.
 
 ## Project Structure
 
@@ -64,7 +64,7 @@ Dovecot_WebInterface/
 │   ├── test_logs.py         # Allowlist parsing, CIDR matching, ban/unban, HTTP tests
 │   └── test_helper_logic.py # Pure unit tests for validation functions (Unix only)
 ├── systemd/
-│   ├── dovecot-webadmin.service         # Web app service (www-data)
+│   ├── dovecot-webadmin.service         # Web app service (dwa-web)
 │   └── dovecot-webadmin-helper.service  # Helper daemon service (root)
 ├── manage.py                # CLI: init-db, create-admin, change-password
 ├── setup.sh                 # Production installation script (git-clone-in-place)
@@ -157,10 +157,13 @@ That's it. The script:
 - Refuses to run if `/opt/dovecot-webadmin/` has uncommitted local edits
 - `git pull --ff-only` from the same branch you installed
 - Re-runs `pip install` **only** when `requirements.txt` changed
-- Refreshes `/etc/systemd/system/*.service` and reloads systemd **only** when the unit files changed
-- Restarts both services and tails recent log entries
+- Refreshes `/etc/systemd/system/*.service` and reloads systemd **only** when the installed units differ from the repo
+- Ensures the `dwa-web` service account exists and re-applies file ownership (root-owned tree; only `data/` is writable by the service)
+- Restarts both services (only if something changed) and tails recent log entries
 
-No-op updates (already at the latest commit) exit immediately. Equivalent direct invocation: `sudo /opt/dovecot-webadmin/update.sh`.
+Re-running it with nothing to pull is safe and repairs ownership drift.
+
+**Upgrading from a `www-data` install:** run `sudo dovecot-webadmin-update` **twice**. The first run still executes the old update script (bash has it loaded before `git pull`), installs the new units, and the services will fail to start because `dwa-web` doesn't exist yet. The second run creates the account, re-owns the tree and restarts. Expect a few seconds of downtime between the two runs. Equivalent direct invocation: `sudo /opt/dovecot-webadmin/update.sh`.
 
 ### Migrating an existing copy-based install
 
@@ -179,7 +182,7 @@ sudo rm -rf /opt/dovecot-webadmin
 sudo /tmp/dovecot-webadmin-src/setup.sh
 sudo cp /tmp/dwa.env.bak /opt/dovecot-webadmin/.env
 sudo cp -r /tmp/dwa-data.bak/* /opt/dovecot-webadmin/data/
-sudo chown -R www-data:www-data /opt/dovecot-webadmin/data /opt/dovecot-webadmin/.env
+sudo /opt/dovecot-webadmin/update.sh   # re-applies ownership and restarts
 sudo systemctl restart dovecot-webadmin-helper dovecot-webadmin
 ```
 
@@ -260,7 +263,10 @@ journalctl -u dovecot-webadmin-helper -f
 
 ## Security Notes
 
-- The web app process (`www-data`) has no sudo access and cannot run system commands directly
+- The web app runs as its own `dwa-web` account with no sudo access and cannot run system commands directly. Only `dwa-web` (and root) can talk to the helper socket. The install tree is root-owned, so neither the web app nor any other unprivileged process (e.g. a compromised PHP app running as `www-data`) can modify code the root helper executes
+- The helper runs on the system Python in isolated mode (`python3 -I`), so it doesn't load anything from the app's virtualenv
+- The helper only changes accounts that are mail-only (mail group, uid ≥ 1000, `nologin` shell) — it will not reset the password of a login account
+- CIDR bans must be /16 or narrower and may not overlap the never-ban allowlist
 - The helper daemon validates all inputs with strict regex before executing any system operation
 - Reserved usernames (`root`, `postfix`, `dovecot`, etc.) cannot be created through the web UI
 - IP banning validates address format and rejects loopback/wildcard addresses

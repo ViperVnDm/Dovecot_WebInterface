@@ -2,7 +2,14 @@
 # Dovecot Web Admin Console - Update Script
 # Run as root or with sudo. Pulls the latest changes, re-installs Python
 # dependencies if requirements.txt changed, refreshes systemd units if
-# they changed, and restarts both services.
+# they differ from the installed copies, re-applies file ownership, and
+# restarts both services if anything changed.
+#
+# The ownership/account steps run even when there is nothing to pull, so
+# re-running this script also repairs a drifted install. That is also how an
+# install that predates the dwa-web account migrates: the first update after
+# that change still executes the *old* script (bash loaded it before the
+# pull), so run `sudo dovecot-webadmin-update` a second time.
 #
 # Usage:
 #   sudo dovecot-webadmin-update         # via the /usr/local/sbin symlink
@@ -16,7 +23,8 @@ set -e
 INSTALL_DIR="/opt/dovecot-webadmin"
 VENV_DIR="$INSTALL_DIR/venv"
 SYSTEMD_DIR="/etc/systemd/system"
-SERVICE_USER="www-data"
+# Keep in sync with setup.sh (see the comment there on why not www-data).
+SERVICE_USER="dwa-web"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,6 +34,20 @@ NC='\033[0m'
 echo_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 echo_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Keep in sync with apply_ownership() in setup.sh.
+apply_ownership() {
+    chown -R root:root "$INSTALL_DIR"
+    chmod -R u=rwX,go=rX "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR/data"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
+    chmod 700 "$INSTALL_DIR/data"
+    if [ -f "$INSTALL_DIR/.env" ]; then
+        chown "root:$SERVICE_USER" "$INSTALL_DIR/.env"
+        chmod 640 "$INSTALL_DIR/.env"
+    fi
+    chmod 750 "$INSTALL_DIR/update.sh"
+}
 
 main() {
     if [ "$EUID" -ne 0 ]; then
@@ -42,6 +64,13 @@ main() {
 
     cd "$INSTALL_DIR"
 
+    local needs_restart=false
+    if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+        echo_info "Creating service account $SERVICE_USER..."
+        useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE_USER"
+        needs_restart=true
+    fi
+
     # Refuse to merge over local edits — operators occasionally hand-patch
     # files in /opt and would lose those changes silently otherwise.
     if [ -n "$(git status --porcelain)" ]; then
@@ -51,9 +80,8 @@ main() {
         exit 1
     fi
 
-    local before_req before_units current_branch
+    local before_req current_branch
     before_req=$(sha256sum requirements.txt | awk '{print $1}')
-    before_units=$(sha256sum systemd/*.service | sha256sum | awk '{print $1}')
     current_branch=$(git rev-parse --abbrev-ref HEAD)
 
     echo_info "Fetching latest from origin/$current_branch..."
@@ -65,11 +93,11 @@ main() {
 
     if [ "$local_sha" = "$remote_sha" ]; then
         echo_info "Already up to date ($local_sha)."
-        exit 0
+    else
+        echo_info "Updating $local_sha → $remote_sha"
+        git pull --ff-only --quiet origin "$current_branch"
+        needs_restart=true
     fi
-
-    echo_info "Updating $local_sha → $remote_sha"
-    git pull --ff-only --quiet origin "$current_branch"
 
     # Re-install deps only if requirements.txt actually changed (most
     # updates don't touch deps, so this saves ~10s per run).
@@ -83,26 +111,33 @@ main() {
         echo_info "requirements.txt unchanged — skipping pip install."
     fi
 
-    # Refresh systemd units only if they changed.
-    local after_units
-    after_units=$(sha256sum systemd/*.service | sha256sum | awk '{print $1}')
-    if [ "$before_units" != "$after_units" ]; then
-        echo_info "Systemd units changed — copying to $SYSTEMD_DIR and reloading..."
-        cp "$INSTALL_DIR/systemd/dovecot-webadmin.service" "$SYSTEMD_DIR/"
-        cp "$INSTALL_DIR/systemd/dovecot-webadmin-helper.service" "$SYSTEMD_DIR/"
+    # Refresh systemd units if the installed copies differ from the repo —
+    # compared against /etc rather than before/after the pull, so a unit
+    # that was never copied (or was hand-edited) is also corrected.
+    local units_changed=false unit
+    for unit in dovecot-webadmin.service dovecot-webadmin-helper.service; do
+        if ! cmp -s "$INSTALL_DIR/systemd/$unit" "$SYSTEMD_DIR/$unit"; then
+            cp "$INSTALL_DIR/systemd/$unit" "$SYSTEMD_DIR/"
+            units_changed=true
+        fi
+    done
+    if [ "$units_changed" = true ]; then
+        echo_info "Systemd units changed — reloading..."
         systemctl daemon-reload
+        needs_restart=true
     else
         echo_info "Systemd units unchanged — skipping daemon-reload."
     fi
 
-    # File ownership: git pull writes as root (since we run as root). Reset
-    # the working tree to www-data so the web service can read its own files,
-    # then restore root ownership on .git/ and privileged/.
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
-    chown -R root:root "$INSTALL_DIR/privileged"
-    chown -R root:root "$INSTALL_DIR/.git"
-    chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
-    chmod 750 "$INSTALL_DIR/update.sh"
+    # The tree must stay root-owned (see apply_ownership). Precompile as root
+    # because the service can't write __pycache__ into a root-owned tree.
+    apply_ownership
+    "$VENV_DIR/bin/python" -m compileall -q "$INSTALL_DIR/app" >/dev/null || true
+
+    if [ "$needs_restart" != true ]; then
+        echo_info "Nothing changed — services left running."
+        exit 0
+    fi
 
     echo_info "Restarting services..."
     systemctl restart dovecot-webadmin-helper

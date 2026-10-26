@@ -11,7 +11,10 @@ set -e
 INSTALL_DIR="/opt/dovecot-webadmin"
 VENV_DIR="$INSTALL_DIR/venv"
 DATA_DIR="$INSTALL_DIR/data"
-SERVICE_USER="www-data"
+# Dedicated, login-less account for the web app. Not www-data: that account
+# is shared with nginx and usually PHP-FPM, and anything running as the web
+# app's user can reach the root helper socket and write the app database.
+SERVICE_USER="dwa-web"
 UPDATE_SYMLINK="/usr/local/sbin/dovecot-webadmin-update"
 
 SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
@@ -32,6 +35,23 @@ echo_warn() {
 
 echo_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Everything under the install dir is root-owned and read-only to the service;
+# the root helper runs from this tree, so the service account must not be able
+# to change any of it. The only exceptions are data/ (the SQLite DB) and .env,
+# which the service may read but not write. Keep in sync with update.sh.
+apply_ownership() {
+    chown -R root:root "$INSTALL_DIR"
+    chmod -R u=rwX,go=rX "$INSTALL_DIR"
+    mkdir -p "$DATA_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    chmod 700 "$DATA_DIR"
+    if [ -f "$INSTALL_DIR/.env" ]; then
+        chown "root:$SERVICE_USER" "$INSTALL_DIR/.env"
+        chmod 640 "$INSTALL_DIR/.env"
+    fi
+    chmod 750 "$INSTALL_DIR/update.sh"
 }
 
 # Check if running as root
@@ -87,12 +107,17 @@ if [ -e "$INSTALL_DIR" ]; then
         echo_error "  sudo $0           # re-run setup"
         echo_error "  sudo cp /tmp/dwa.env.bak $INSTALL_DIR/.env"
         echo_error "  sudo cp -r /tmp/dwa-data.bak/* $INSTALL_DIR/data/"
-        echo_error "  sudo chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR/data $INSTALL_DIR/.env"
+        echo_error "  sudo $INSTALL_DIR/update.sh   # re-applies ownership"
     fi
     exit 1
 fi
 
 echo_info "Installing Dovecot Web Admin Console from $REPO_URL"
+
+if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    echo_info "Creating service account $SERVICE_USER..."
+    useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
 
 # Clone the repo in-place. Subsequent updates pull into this same directory.
 echo_info "Cloning repository to $INSTALL_DIR..."
@@ -118,19 +143,6 @@ echo_info "Generating secret key..."
 SECRET_KEY=$("$VENV_DIR/bin/python" -c "import secrets; print(secrets.token_urlsafe(32))")
 sed -i "s/SECRET_KEY=.*/SECRET_KEY=$SECRET_KEY/" "$INSTALL_DIR/.env"
 
-# Set permissions
-echo_info "Setting file permissions..."
-chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
-chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
-chmod 600 "$INSTALL_DIR/.env"
-
-# Privileged helper needs root ownership
-chown root:root "$INSTALL_DIR/privileged" -R
-
-# Keep .git owned by root so future `sudo git pull` works without tripping
-# git's "dubious ownership" safety check (CVE-2022-24765).
-chown -R root:root "$INSTALL_DIR/.git"
-
 # Install systemd services
 echo_info "Installing systemd services..."
 cp "$INSTALL_DIR/systemd/dovecot-webadmin.service" /etc/systemd/system/
@@ -139,7 +151,6 @@ systemctl daemon-reload
 
 # Install the update helper as a system command
 echo_info "Installing update helper at $UPDATE_SYMLINK..."
-chmod 750 "$INSTALL_DIR/update.sh"
 ln -sf "$INSTALL_DIR/update.sh" "$UPDATE_SYMLINK"
 
 # Create initial admin user
@@ -169,6 +180,12 @@ asyncio.run(main())
 
 # Scrub the password from this shell's memory
 unset ADMIN_PASS
+
+# Set permissions — after the admin user is created, because that step runs
+# as root and creates data/admin.db. Root ownership of .git also keeps
+# `sudo git pull` clear of git's "dubious ownership" check (CVE-2022-24765).
+echo_info "Setting file permissions..."
+apply_ownership
 
 # Enable and start services
 echo_info "Enabling and starting services..."

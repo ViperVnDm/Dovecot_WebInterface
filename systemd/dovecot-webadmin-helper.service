@@ -5,16 +5,20 @@ After=network.target
 [Service]
 Type=exec
 User=root
-# Group=www-data so systemd creates /run/dovecot-webadmin/ as root:www-data
+# Group=dwa-web so systemd creates /run/dovecot-webadmin/ as root:dwa-web
 # (with RuntimeDirectoryMode=0750), allowing the web app — which runs as
-# www-data with no supplementary groups — to traverse into the dir and
-# reach the helper socket. The process still has EUID=0 so all privileged
-# subprocesses (useradd, chpasswd, ufw, ...) work normally.
-Group=www-data
+# dwa-web — to traverse into the dir and reach the helper socket. Not
+# www-data: that account is shared with nginx and PHP-FPM. The process still
+# has EUID=0 so all privileged subprocesses (useradd, chpasswd, ufw, ...)
+# work normally.
+Group=dwa-web
 WorkingDirectory=/opt/dovecot-webadmin
-Environment="PATH=/opt/dovecot-webadmin/venv/bin"
 EnvironmentFile=-/opt/dovecot-webadmin/.env
-ExecStart=/opt/dovecot-webadmin/venv/bin/python -m privileged.server
+# The helper is stdlib-only, so it runs on the system interpreter in isolated
+# mode (-I): no PYTHON* env vars, no cwd or user site-packages on sys.path.
+# Nothing the web app's dependencies or a stray .py file in the install dir
+# can do will execute as root.
+ExecStart=/usr/bin/python3 -I /opt/dovecot-webadmin/privileged/server.py
 Restart=always
 RestartSec=5
 
@@ -61,7 +65,7 @@ RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 # System call filter — block exotic syscalls that the helper should never use.
 # Note: we can't use ~@privileged because in systemd 250+ it includes @chown,
 # which the helper legitimately needs at startup to set group ownership on
-# /run/dovecot-webadmin/helper.sock so www-data can connect. Instead we list
+# /run/dovecot-webadmin/helper.sock so dwa-web can connect. Instead we list
 # the dangerous subgroups individually.
 SystemCallFilter=@system-service
 SystemCallFilter=~@clock @module @reboot @swap @raw-io @mount @debug @cpu-emulation @obsolete @resources
