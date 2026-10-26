@@ -106,7 +106,9 @@ main() {
     if [ "$before_req" != "$after_req" ]; then
         echo_info "requirements.txt changed — reinstalling Python dependencies..."
         "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-        "$VENV_DIR/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
+        # Hash-pinned lock: == pins also *upgrade* packages already present,
+        # which a bare `>=` requirements file never did.
+        "$VENV_DIR/bin/pip" install --quiet --require-hashes -r "$INSTALL_DIR/requirements.txt"
     else
         echo_info "requirements.txt unchanged — skipping pip install."
     fi

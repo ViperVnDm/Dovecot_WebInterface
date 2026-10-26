@@ -69,7 +69,9 @@ Dovecot_WebInterface/
 ├── manage.py                # CLI: init-db, create-admin, change-password
 ├── setup.sh                 # Production installation script (git-clone-in-place)
 ├── update.sh                # In-place update: git pull + conditional pip/systemd + restart
-├── requirements.txt
+├── requirements.in                    # Top-level runtime deps (edit this)
+├── requirements.txt                   # Hash-pinned lock compiled from requirements.in
+├── requirements-dev.txt               # Test tooling
 ├── pyproject.toml           # pytest configuration
 └── .env.example             # Configuration template
 ```
@@ -216,6 +218,7 @@ cd Dovecot_WebInterface
 python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # separately: the lock is hash-checked, this isn't
 
 # Initialize DB and create admin user
 python manage.py init-db
@@ -233,6 +236,7 @@ The app will be available at `http://localhost:8000`. Log in with the admin cred
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
@@ -245,6 +249,19 @@ pytest tests/test_auth.py -v
 pytest tests/test_logs.py -v
 pytest tests/test_alerts.py -v
 ```
+
+## Dependencies
+
+`requirements.in` lists the top-level runtime dependencies. `requirements.txt` is a fully pinned lock with hashes compiled from it, and is what `setup.sh` / `update.sh` install (`pip install --require-hashes`). To add or bump a dependency:
+
+```bash
+# edit requirements.in, then:
+uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
+pip-audit -r requirements.txt --require-hashes --disable-pip    # must report no known vulnerabilities
+pytest tests/
+```
+
+Re-run the `pip-audit` line before each deploy as well: new advisories appear against versions that were clean when locked. Re-lock with `--upgrade` added to the compile command to pick up fixes.
 
 ## Service Management
 

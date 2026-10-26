@@ -136,7 +136,8 @@ python3 -m venv "$VENV_DIR"
 # Install dependencies
 echo_info "Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+# requirements.txt is a hash-pinned lock (generated from requirements.in).
+"$VENV_DIR/bin/pip" install --require-hashes -r "$INSTALL_DIR/requirements.txt"
 
 # Generate secret key
 echo_info "Generating secret key..."

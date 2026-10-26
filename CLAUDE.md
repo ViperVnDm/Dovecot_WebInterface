@@ -122,7 +122,7 @@ The live install at `/opt/dovecot-webadmin/` is a git clone (set up by `setup.sh
 sudo dovecot-webadmin-update
 ```
 
-`update.sh` pulls from the same branch installed, conditionally re-runs `pip install` if `requirements.txt` changed, re-copies systemd unit files and `daemon-reload`s them if they changed, then restarts both services. It refuses to run if `/opt/dovecot-webadmin/` is dirty (local edits) — that prevents silent loss of hand-patched files.
+`update.sh` pulls from the same branch installed, conditionally re-runs `pip install --require-hashes` if the `requirements.txt` lock changed, re-copies systemd unit files and `daemon-reload`s them if they changed, then restarts both services. It refuses to run if `/opt/dovecot-webadmin/` is dirty (local edits) — that prevents silent loss of hand-patched files.
 
 If `/opt/dovecot-webadmin/` is a legacy copy-based install (no `.git`), `update.sh` exits with migration instructions — see README.md → "Migrating an existing copy-based install".
 
@@ -165,6 +165,7 @@ Runtime settings (SMTP config, alert interval, IP allowlist) are stored in the `
 
 ## Known Quirks
 
-- `bcrypt` must be pinned to `<4.0.0` (passlib compatibility)
+- `requirements.txt` is a generated, hash-pinned lock — edit `requirements.in` and recompile (README → Dependencies). Changing `requirements.txt` is what makes `update.sh` reinstall, and its `==` pins upgrade packages in place. SQLAlchemy ≥2.1 needs the `[asyncio]` extra (greenlet) or the async engine fails at startup.
+- passlib is gone; `app/core/security.py` calls `bcrypt` directly and truncates to 72 bytes itself, because bcrypt ≥5 raises on longer input where passlib silently truncated — removing the truncation would lock out existing long passwords.
 - Starlette `TemplateResponse` calls all use the new `(request, name, {...})` form (Starlette 1.0.0 + Jinja2 3.1). Keep using it — the old `(name, {"request": ...})` form raises `TypeError: unhashable type: 'dict'`. (Migration completed 2026-05-30.)
 - `asyncio.open_unix_connection` does not exist on Windows; the helper IPC client will fail on Windows (expected — the helper is Linux-only)

@@ -1,0 +1,8 @@
+# Development / test tooling. Install on top of the runtime lock:
+#   pip install -r requirements.txt -r requirements-dev.txt
+# (not hash-pinned — never installed on the server)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+anyio[trio]>=4.0.0
+httpx>=0.26.0
+pip-audit

@@ -1,0 +1,32 @@
+# Top-level runtime dependencies. Edit THIS file, then regenerate the lock:
+#
+#   uv pip compile requirements.in --universal --python-version 3.12 \
+#       --generate-hashes -o requirements.txt
+#
+# requirements.txt is the fully pinned, hash-checked lock that setup.sh and
+# update.sh install. Test tooling lives in requirements-dev.txt.
+
+# Core framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database
+sqlalchemy[asyncio]>=2.0
+aiosqlite
+
+# Security
+bcrypt>=4.2
+
+# Templates
+jinja2>=3.1.6
+
+# Settings
+pydantic>=2.5
+pydantic-settings>=2.1
+
+# Rate limiting
+slowapi
+
+# LLM client (log triage agent)
+anthropic>=0.40,<1.0
